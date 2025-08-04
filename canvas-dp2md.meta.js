@@ -7,6 +7,6 @@
 // @match        https://*/courses/*/pages/*/edit
 // @match        https://*/courses/*/discussion_topics/*/edit
 // @grant        GM_setClipboard
-// @updateURL    
-// @downloadURL  
+// @updateURL    https://raw.githubusercontent.com/sijpkes/userscripts/refs/heads/main/canvas-dp2md.meta.js
+// @downloadURL  https://raw.githubusercontent.com/sijpkes/userscripts/refs/heads/main/canvas-dp2md.user.js
 // ==/UserScript==
