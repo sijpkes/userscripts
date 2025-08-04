@@ -15,8 +15,6 @@
 (function () {
     'use strict';
 
-    alert('loaded canvas-dp2md.user.js');
-
     const DESIGN_WRAPPER_START = '<<DESIGN PLUS WRAPPER START>>';
     const DESIGN_WRAPPER_END = '<<DESIGN PLUS WRAPPER END>>';
     const HEADER_START = '<<HEADER START>>';
