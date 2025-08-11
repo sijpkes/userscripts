@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Canvas DesignPlus to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      1.3
-// @description  Convert to or from DesignPLUS HTML in Canvas to or from Markdown with custom markers
+// @version      1.4 // Increased version due to critical nesting fix
+// @description  Convert to or from DesignPLUS HTML in Canvas to or from Markdown with custom markers, handling mixed and nested content.
 // @author       Paul Sijpkes
 // @match        https://*/courses/*/pages/*/edit
 // @match        https://*/courses/*/discussion_topics/*/edit
@@ -15,59 +15,57 @@
 (function () {
     'use strict';
 
+    // Markdown pseudo-tags for DesignPlus components
     const DESIGN_WRAPPER_START = '<<DESIGN PLUS WRAPPER START>>';
     const DESIGN_WRAPPER_END = '<<DESIGN PLUS WRAPPER END>>';
     const HEADER_START = '<<HEADER START>>';
     const HEADER_END = '<<HEADER END>>';
     const BLOCK_START = '<<CONTENT BLOCK START>>';
     const BLOCK_END = '<<CONTENT BLOCK END>>';
+    const ACCORDION_START = '<<ACCORDIAN>>';
+    const ACCORDION_END = '<</ACCORDIAN>>';
+    const PANEL_GROUP_START = '<<PANEL-GROUP>>';
+    const PANEL_GROUP_END = '<</PANEL-GROUP>>';
+    const PANEL_HEADING_TAG = '<<PANEL-HEADING>>';
+    const PANEL_HEADING_END_TAG = '<</PANEL-HEADING>>';
+    const PANEL_CONTENT_START = '<<PANEL-CONTENT>>';
+    const PANEL_CONTENT_END = '<</PANEL-CONTENT>>';
     const ICON_REGEX = /<<ICON\s+([^>]+)>>/;
+
 
     /**
      * Converts a markdown-like string with headings and bullet points into
-     * a DesignPlus Accordion HTML structure.
-     *
-     * This function is designed to take the entire markdown input (like example 1)
-     * and produce the full accordion HTML output (like example 2).
+     * a DesignPlus Accordion HTML structure. This function is specifically
+     * designed to take the '#### heading' followed by lists format and
+     * produce the full dp-panels-wrapper HTML.
      *
      * @param {string} markdownInput The input string containing markdown headings and lists.
      * @returns {string} The generated HTML for a DesignPlus Accordion.
      */
     function convertMarkdownToDesignPlusAccordion(markdownInput) {
         const panels = [];
-
-        // Split the markdown input into blocks based on '#### ' followed by a newline.
-        // The positive lookahead (?=\n#### ) ensures the delimiter itself (#### ) is preserved
-        // at the beginning of each new block, making it easier to extract headings.
         const blocks = markdownInput.split(/(?=\n#### )/g);
 
-        // Helper function to encode HTML entities for safe display in HTML.
         function encodeHtmlEntities(str) {
             let encodedStr = str;
-            // Basic HTML entities (must be first for '&')
             encodedStr = encodedStr.replace(/&/g, '&amp;');
             encodedStr = encodedStr.replace(/</g, '&lt;');
             encodedStr = encodedStr.replace(/>/g, '&gt;');
-            encodedStr = encodedStr.replace(/"/g, '&quot;'); // Standard straight double quotes
-            encodedStr = encodedStr.replace(/'/g, '&apos;'); // Standard straight single quotes
-
-            // Specific Unicode characters to HTML entities as seen in the example output (2)
-            encodedStr = encodedStr.replace(/“/g, '&ldquo;'); // Left double quotation mark
-            encodedStr = encodedStr.replace(/”/g, '&rdquo;'); // Right double quotation mark
-            encodedStr = encodedStr.replace(/‘/g, '&lsquo;'); // Left single quotation mark
-            encodedStr = encodedStr.replace(/’/g, '&rsquo;'); // Right single quotation mark
-            encodedStr = encodedStr.replace(/…/g, '&hellip;'); // Horizontal ellipsis
-            encodedStr = encodedStr.replace(/→/g, '&rarr;');   // Rightwards arrow
-
+            encodedStr = encodedStr.replace(/"/g, '&quot;');
+            encodedStr = encodedStr.replace(/'/g, '&apos;');
+            encodedStr = encodedStr.replace(/“/g, '&ldquo;');
+            encodedStr = encodedStr.replace(/”/g, '&rdquo;');
+            encodedStr = encodedStr.replace(/‘/g, '&lsquo;');
+            encodedStr = encodedStr.replace(/’/g, '&rsquo;');
+            encodedStr = encodedStr.replace(/…/g, '&hellip;');
+            encodedStr = encodedStr.replace(/→/g, '&rarr;');
             return encodedStr;
         }
 
-        // Helper function to parse list markdown lines into a flat <ul> HTML structure.
         function parseListToHtml(listMarkdownLines) {
             let html = '<ul>';
-            // Regex to match a list item, capturing any leading whitespace and the content.
-            const listItemRegex = /^(\s*)[*+-]\s*(.*)$/; // Handles *, -, + for bullet points
-            const olListItemRegex = /^\d+\.\s*(.*)$/; // Handles 1., 2. for ordered lists
+            const listItemRegex = /^(\s*)[*+-]\s*(.*)$/;
+            const olListItemRegex = /^\d+\.\s*(.*)$/;
 
             for (const line of listMarkdownLines) {
                 let content = '';
@@ -79,19 +77,14 @@
                     html += `\n                        <li>${content}</li>`;
                 } else if (olListItemMatch) {
                     content = encodeHtmlEntities(olListItemMatch[1].trim());
-                    // Since the target output (2) shows all lists as <ul> regardless of input numbering,
-                    // we'll stick to <ul> here as per the example.
                     html += `\n                        <li>${content}</li>`;
                 }
-                // Non-list lines (e.g., empty lines between list items) are ignored as per example output.
             }
             html += '\n                    </ul>';
             return html;
         }
 
-        // Process each block to extract heading and list content
         for (let block of blocks) {
-            // Remove leading newline character that might be present from the split for subsequent blocks.
             if (block.startsWith('\n')) {
                 block = block.substring(1);
             }
@@ -99,7 +92,7 @@
             const lines = block.split('\n');
             let heading = '';
             const listMarkdownLines = [];
-            const headingRegex = /^####\s*(.*)$/; // Regex to find the heading line
+            const headingRegex = /^####\s*(.*)$/;
 
             let headingFound = false;
 
@@ -108,18 +101,13 @@
                 const headingMatch = line.match(headingRegex);
 
                 if (headingMatch && !headingFound) {
-                    // If a heading is found and it's the first one in this block, extract it.
                     heading = encodeHtmlEntities(headingMatch[1].trim());
                     headingFound = true;
                 } else if (headingFound && line.trim() !== '') {
-                    // After the heading, all non-empty lines are considered potential list items.
                     listMarkdownLines.push(line);
                 }
             }
 
-            // If both a heading and list items are found, create a new panel.
-            // The example output (2) shows that even lists with fewer than 3 items or short content
-            // are converted if they follow a '####' heading.
             if (heading && listMarkdownLines.length > 0) {
                 panels.push({
                     heading: heading,
@@ -128,7 +116,6 @@
             }
         }
 
-        // Assemble the final HTML string for the entire accordion structure.
         let fullHtml = `<div class="dp-panels-wrapper dp-accordion-default dp-panel-heading-text-start">`;
         for (const panel of panels) {
             fullHtml += `
@@ -139,7 +126,7 @@
                 </div>
             </div>`;
         }
-        fullHtml += `\n        </div>`; // Match closing tag indentation from example
+        fullHtml += `\n        </div>`;
 
         return fullHtml;
     }
@@ -170,371 +157,380 @@
     /**
      * Converts a DesignPlus Accordion HTML structure into markdown pseudo tags.
      * @param {HTMLElement} accordionWrapper The .dp-panels-wrapper element.
+     * @param {string} indent The indentation string (e.g., '  ' for outer, '    ' for inner).
      * @returns {string} Markdown string with accordion pseudo tags.
      */
-    function convertAccordionToMarkdownPseudoTags(accordionWrapper) {
-        let md = `<<ACCORDIAN>>\n`;
+    function convertAccordionToMarkdownPseudoTags(accordionWrapper, indent = '') {
+        let md = `${indent}${ACCORDION_START}\n`;
 
-        accordionWrapper.querySelectorAll('.dp-panel-group').forEach(panelGroup => {
-            md += `  <<PANEL-GROUP>>\n`;
+        accordionWrapper.querySelectorAll(':scope > .dp-panel-group').forEach(panelGroup => {
+            md += `${indent}  ${PANEL_GROUP_START}\n`;
 
-            const headingElement = panelGroup.querySelector('.dp-panel-heading');
+            const headingElement = panelGroup.querySelector(':scope > .dp-panel-heading');
             if (headingElement) {
-                md += `    <<PANEL-HEADING>>${headingElement.textContent.trim()}<</PANEL-HEADING>>\n`;
+                md += `${indent}    ${PANEL_HEADING_TAG}${headingElement.textContent.trim()}${PANEL_HEADING_END_TAG}\n`;
             }
 
-            const contentElement = panelGroup.querySelector('.dp-panel-content');
+            const contentElement = panelGroup.querySelector(':scope > .dp-panel-content');
             if (contentElement) {
-                md += `    <<PANEL-CONTENT>>\n`;
+                md += `${indent}    ${PANEL_CONTENT_START}\n`;
                 // Iterate through all list items within the content and convert to markdown list
                 contentElement.querySelectorAll('li').forEach(li => {
-                    md += `      * ${li.textContent.trim()}\n`;
+                    md += `${indent}      * ${li.textContent.trim()}\n`;
                 });
-                md += `    <</PANEL-CONTENT>>\n`;
+                md += `${indent}    ${PANEL_CONTENT_END}\n`;
             }
-            md += `  <</PANEL-GROUP>>\n`;
+            md += `${indent}  ${PANEL_GROUP_END}\n`;
         });
 
-        md += `<</ACCORDIAN>>\n`;
+        md += `${indent}${ACCORDION_END}\n`;
         return md;
     }
 
+    /**
+     * Converts a DesignPLUS HTML wrapper element into a markdown string,
+     * handling various DesignPLUS components including nested accordions.
+     *
+     * @param {HTMLElement} wrapper The DesignPLUS wrapper element (#dp-wrapper) or document.body if elements are top-level.
+     * @returns {string} The generated markdown string.
+     */
     function convertToMarkdown(wrapper) {
-        let md = `${DESIGN_WRAPPER_START}\n\n`;
+        let md = '';
 
-        // Check if the wrapper is a DesignPlus Accordion and handle it specifically
-        const accordionWrapper = wrapper.querySelector('.dp-panels-wrapper.dp-accordion-default');
-        if (accordionWrapper) {
-            // If it's an accordion, use the dedicated function and return its markdown.
-            // This assumes an accordion is the primary content, not mixed with other blocks.
-            return `${DESIGN_WRAPPER_START}\n\n${convertAccordionToMarkdownPseudoTags(accordionWrapper)}${DESIGN_WRAPPER_END}\n`;
-        }
+        // Add overall DESIGN_WRAPPER_START at the beginning
+        md += `${DESIGN_WRAPPER_START}\n\n`;
 
-        const progress = wrapper.querySelector('.dp-progress-completion');
-        if (progress) {
-            md += `<<MODULE PROGRESS BAR>>\n`;
-        }
+        // Check for and process top-level DesignPLUS structural elements in order of appearance
+        // Use Array.from(wrapper.children) to ensure processing in DOM order
+        Array.from(wrapper.children).forEach(child => {
+            if (child.classList.contains('dp-progress-completion')) {
+                md += `<<MODULE PROGRESS BAR>>\n`;
+            } else if (child.classList.contains('dp-header')) {
+                const pre = child.querySelector('.dp-header-pre-1')?.textContent.trim() || '';
+                const title = child.querySelector('.dp-header-title')?.textContent.trim() || '';
+                md += `${HEADER_START}\n`;
+                md += `## ${pre}: ${title}\n`;
+                md += `${HEADER_END}\n\n`;
+            } else if (child.classList.contains('dp-panels-wrapper') && child.classList.contains('dp-accordion-default')) {
+                // Top-level accordion
+                md += convertAccordionToMarkdownPseudoTags(child, ''); // No extra indent for top-level
+            } else if (child.classList.contains('dp-content-block')) {
+                // This is where most content lives, including potentially nested accordions
+                const block = child;
+                const blockId = block.getAttribute('data-id');
+                if (blockId) md += `<!-- dp-id: ${blockId} -->\n`;
+                md += `${BLOCK_START}\n\n`;
 
-        const header = wrapper.querySelector('.dp-header');
-        if (header) {
-            const pre = header.querySelector('.dp-header-pre-1')?.textContent.trim() || '';
-            const title = header.querySelector('.dp-header-title')?.textContent.trim() || '';
-            md += `${HEADER_START}\n`;
-            md += `## ${pre}: ${title}\n`;
-            md += `${HEADER_END}\n\n`;
-        }
-
-        // Existing logic for non-accordion DesignPLUS content
-        wrapper.querySelectorAll('.dp-content-block').forEach(block => {
-            const blockId = block.getAttribute('data-id');
-            if (blockId) md += `<!-- dp-id: ${blockId} -->\n`;
-            md += `${BLOCK_START}\n\n`;
-
-            const heading = block.querySelector('h1, h2, h3, h4, h5, h6');
-            if (heading) {
-                const level = parseInt(heading.tagName.substring(1), 10); // e.g., "H3" → 3
-                const hashes = '#'.repeat(level); // Generate correct number of hashes
-                const icon = heading.querySelector('i');
-
-                if (icon) {
-                    const iconClass = [...icon.classList]
-                        .filter(c => c.startsWith('fa'))
-                        .join(' ');
-                    md += `<<ICON ${iconClass}>> `;
-                }
-
-                md += `${hashes} ${heading.textContent.trim()}\n\n`;
+                // Process direct children of the content block to maintain order
+                Array.from(block.children).forEach(blockChild => {
+                    if (blockChild.matches('h1, h2, h3, h4, h5, h6')) {
+                        const level = parseInt(blockChild.tagName.substring(1), 10);
+                        const hashes = '#'.repeat(level);
+                        const icon = blockChild.querySelector('i');
+                        if (icon) {
+                            const iconClass = [...icon.classList].filter(c => c.startsWith('fa')).join(' ');
+                            md += `<<ICON ${iconClass}>> `;
+                        }
+                        md += `${hashes} ${blockChild.textContent.trim()}\n\n`;
+                    } else if (blockChild.matches('p')) {
+                        const text = blockChild.innerText.trim();
+                        if (text) md += `${text}\n\n`;
+                    } else if (blockChild.matches('ul, ol')) {
+                        // Handle standard lists within content blocks
+                        const listTag = blockChild.tagName.toLowerCase();
+                        Array.from(blockChild.children).forEach((li, i) => {
+                            if (listTag === 'ol') {
+                                md += `${i+1}. ${li.innerText.trim()}\n`;
+                            } else {
+                                md += `* ${li.innerText.trim()}\n`;
+                            }
+                        });
+                        md += '\n'; // Add newline after each list
+                    } else if (blockChild.matches('iframe')) {
+                        const src = blockChild.getAttribute('src');
+                        const title = blockChild.getAttribute('title');
+                        if (title) md += `<!-- dp-iframe-title: ${title} -->\n`;
+                        if (src) md += `[Embedded Content](${src})\n\n`;
+                    } else if (blockChild.matches('a[href]')) { // Direct links inside block
+                        const href = blockChild.href;
+                        const text = blockChild.textContent.trim();
+                        if (href && text) md += `[${text}](${href})\n\n`;
+                    } else if (blockChild.classList.contains('dp-panels-wrapper') && blockChild.classList.contains('dp-accordion-default')) {
+                        // Nested accordion inside a content block
+                        md += convertAccordionToMarkdownPseudoTags(blockChild, '  '); // Indent for nesting
+                    }
+                    // Add other HTML elements that might be direct children of dp-content-block here
+                });
+                md += `${BLOCK_END}\n\n`;
             }
-
-            block.querySelectorAll('p').forEach(p => {
-                const text = p.innerText.trim();
-                if (text) md += `${text}\n\n`;
-            });
-
-            block.querySelectorAll('ul').forEach(ul => {
-                ul.querySelectorAll('li').forEach(li => {
-                    md += `* ${li.innerText.trim()}\n`;
-                });
-                md += '\n';
-            });
-
-            block.querySelectorAll('ol').forEach(ol => {
-                ol.querySelectorAll('li').forEach((li, i) => {
-                    md += `${i+1}. ${li.innerText.trim()}\n`;
-                });
-                md += '\n';
-            });
-
-            block.querySelectorAll('iframe').forEach(iframe => {
-                const src = iframe.getAttribute('src');
-                const title = iframe.getAttribute('title');
-                if (title) md += `<!-- dp-iframe-title: ${title} -->\n`;
-                if (src) md += `[Embedded Content](${src})\n\n`;
-            });
-
-            block.querySelectorAll('a').forEach(a => {
-                const href = a.href;
-                const text = a.textContent.trim();
-                if (href && text) md += `[${text}](${href})\n\n`;
-            });
-
-            md += `${BLOCK_END}\n\n`;
+            // Add other top-level content structures here if they exist beyond header/progress/content-block/accordion
         });
 
+        // Add overall DESIGN_WRAPPER_END at the end
         md += `${DESIGN_WRAPPER_END}\n`;
         return md;
     }
 
+
+    /**
+     * Converts a markdown string (potentially with DesignPLUS pseudo-tags) into HTML.
+     * This function handles mixed content, including nested accordions.
+     *
+     * @param {string} input The markdown string to convert.
+     * @returns {string} The generated HTML string.
+     */
     function parseDesignPlusMarkdownToHTML(input) {
         const lines = input.trim().split('\n');
+        let html = '';
 
-        // --- ACCORDION DETECTION LOGIC BASED ON LIST LENGTH ---
-        let totalEstimatedListLines = 0;
-        let hasH4Headings = false;
-        let hasAnyListItems = false;
+        // State variables for nested parsing
+        let inWrapper = false;
+        let inBlock = false;
+        let inAccordion = false;
+        let inPanelGroup = false;
+        let inPanelContent = false;
+        let inList = false; // For standard UL/OL outside accordion
+        let inOList = false; // For standard OL outside accordion
 
-        // Heuristic for "page height" based on 12pt font.
-        // A common readability standard is 45-75 characters per line. Let's use 70 for calculation.
-        const CHARS_PER_LINE = 70;
-        // A typical line height for 12pt text is around 20px.
-        const LINE_HEIGHT_PX = 20;
-        // A rough estimate for user visible content height, e.g., 600px for a standard viewport.
-        const VIEWPORT_HEIGHT_PX = 600;
-        // Calculate the minimum number of effective lines needed to exceed estimated page height.
-        const MIN_EFFECTIVE_LINES_FOR_ACCORDION = Math.ceil(VIEWPORT_HEIGHT_PX / LINE_HEIGHT_PX); // Approx 30 lines for 600px viewport
+        let iconPlaceholders = [];
+        let iconCounter = 0;
+        const titleInput = document.getElementById("TextInput___0") || document.getElementById("wikipage-title-input");
+        let overrideTitle = titleInput.value;
+        const boldRe = /\*\*(.*?)\*\*/g;
+        const italicRe = /\*(.*?)\*/g;
+        const ICON_HEADER_RE = /^<<ICON\s+(.+?)>>\s*###\s*(.+)$/;
 
-        // Check for <<ACCORDIAN>> pseudo tag as the primary indicator for parsing accordion HTML
-        if (input.includes('<<ACCORDIAN>>')) {
-             // If the pseudo tag is present, parse it back to the DesignPlus accordion HTML
-            let html = `<div class="dp-panels-wrapper dp-accordion-default dp-panel-heading-text-start">\n`;
-            let inPanelGroup = false;
-            let inPanelContent = false;
-            let currentHeading = '';
+        // --- ACCORDION AUTOCONVERSION DETECTION LOGIC ---
+        // This runs only if NO pseudo-tags are detected in the entire input,
+        // to auto-convert appropriate markdown (#### + lengthy lists) to accordion HTML.
+        let isPseudoTagAccordionPresent = input.includes(ACCORDION_START);
+        let runAutoAccordionConversion = false;
+
+        if (!isPseudoTagAccordionPresent) {
+            let totalEstimatedListLines = 0;
+            let hasH4Headings = false;
+            let hasAnyListItems = false;
+
+            const CHARS_PER_LINE = 70;
+            const LINE_HEIGHT_PX = 20;
+            const VIEWPORT_HEIGHT_PX = 600;
+            const MIN_EFFECTIVE_LINES_FOR_ACCORDION = Math.ceil(VIEWPORT_HEIGHT_PX / LINE_HEIGHT_PX);
 
             for (const line of lines) {
-                const trimmedLine = line.trim();
+                if (line.startsWith('#### ')) {
+                    hasH4Headings = true;
+                } else if (line.match(/^(\s*)[*+-]\s*(.*)$/)) {
+                    hasAnyListItems = true;
+                    const listItemContent = line.match(/^(\s*)[*+-]\s*(.*)$/)[2];
+                    totalEstimatedListLines += Math.max(1, Math.ceil(listItemContent.length / CHARS_PER_LINE));
+                } else if (line.match(/^\d+\.\s*(.*)$/)) {
+                    hasAnyListItems = true;
+                    const listItemContent = line.match(/^\d+\.\s*(.*)$/)[1];
+                    totalEstimatedListLines += Math.max(1, Math.ceil(listItemContent.length / CHARS_PER_LINE));
+                }
+            }
 
-                if (trimmedLine === '<<PANEL-GROUP>>') {
-                    if (inPanelGroup) { // Close previous panel group if open
+            if (hasAnyListItems && totalEstimatedListLines >= MIN_EFFECTIVE_LINES_FOR_ACCORDION && hasH4Headings) {
+                runAutoAccordionConversion = true;
+            }
+        }
+        // --- END ACCORDION AUTOCONVERSION DETECTION LOGIC ---
+
+
+        // If auto-conversion is triggered for the entire input, perform it and return early.
+        // This assumes the entire content is meant to be one large accordion structure.
+        // This handles cases like example (1) converting to example (2).
+        if (runAutoAccordionConversion) {
+            return convertMarkdownToDesignPlusAccordion(input);
+        }
+
+
+        // Main parsing loop for all other markdown, including explicit pseudo-tags
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i]; // Use original line including leading spaces for parsing context
+            const trimmedLine = line.trim();
+
+            // Handle overall DesignPlus Wrapper
+            if (trimmedLine === DESIGN_WRAPPER_START) {
+                html += `<div id="dp-wrapper" class="dp-wrapper kl_uon" data-img-url="https://designtools.ciditools.com/css/images/banner_desert_sky.png">\n`;
+                inWrapper = true;
+                continue;
+            }
+            if (trimmedLine === DESIGN_WRAPPER_END) {
+                // Ensure all open blocks are closed before wrapper ends
+                if (inPanelContent) { html += '                    </ul>\n                </div>\n'; inPanelContent = false; }
+                if (inPanelGroup) { html += '            </div>\n'; inPanelGroup = false; }
+                if (inAccordion) { html += '        </div>\n'; inAccordion = false; }
+                if (inList) { html += '</ul>\n'; inList = false; }
+                if (inOList) { html += '</ol>\n'; inOList = false; }
+                if (inBlock) { html += '</div>\n'; inBlock = false; }
+
+                html += '<p>&nbsp;</p>\n</div>'; // Closing wrapper and final paragraph
+                inWrapper = false;
+                continue;
+            }
+
+            // Handle CONTENT BLOCK START/END
+            if (trimmedLine === BLOCK_START) {
+                // Close any list before new block
+                if (inList) { html += '</ul>\n'; inList = false; }
+                if (inOList) { html += '</ol>\n'; inOList = false; }
+
+                html += '<div class="dp-content-block">\n';
+                inBlock = true;
+                continue;
+            }
+            if (trimmedLine === BLOCK_END) {
+                // Close any list or nested accordion before block ends
+                if (inPanelContent) { html += '                    </ul>\n                </div>\n'; inPanelContent = false; }
+                if (inPanelGroup) { html += '            </div>\n'; inPanelGroup = false; }
+                if (inAccordion) { html += '        </div>\n'; inAccordion = false; }
+                if (inList) { html += '</ul>\n'; inList = false; }
+                if (inOList) { html += '</ol>\n'; inOList = false; }
+
+                html += '</div>\n';
+                inBlock = false;
+                continue;
+            }
+
+            // Handle ACCORDION pseudo tags (can be top-level or nested within content blocks)
+            if (trimmedLine === ACCORDION_START) {
+                // Close any lists before starting accordion
+                if (inList) { html += '</ul>\n'; inList = false; }
+                if (inOList) { html += '</ol>\n'; inOList = false; }
+
+                // Determine indentation for correct HTML nesting.
+                // If we're inside a block, indent accordingly.
+                const accordionIndent = inBlock ? '    ' : '';
+                html += `${accordionIndent}<div class="dp-panels-wrapper dp-accordion-default dp-panel-heading-text-start">\n`;
+                inAccordion = true;
+                continue;
+            } else if (trimmedLine === ACCORDION_END) {
+                if (inPanelContent) { html += '                    </ul>\n                </div>\n'; inPanelContent = false; }
+                if (inPanelGroup) { html += '            </div>\n'; inPanelGroup = false; }
+                const accordionIndent = inBlock ? '    ' : '';
+                html += `${accordionIndent}</div>\n`;
+                inAccordion = false;
+                continue;
+            } else if (inAccordion) { // Process panel-specific tags ONLY if currently within an accordion block
+                if (trimmedLine === PANEL_GROUP_START) {
+                    // Close previous panel group if open
+                    if (inPanelGroup) {
                         if (inPanelContent) html += '                    </ul>\n                </div>\n';
                         html += '            </div>\n';
                     }
                     html += `            <div class="dp-panel-group">\n`;
                     inPanelGroup = true;
-                    inPanelContent = false;
-                    currentHeading = '';
-                } else if (trimmedLine.startsWith('<<PANEL-HEADING>>') && trimmedLine.endsWith('<</PANEL-HEADING>>')) {
-                    currentHeading = trimmedLine.substring('<<PANEL-HEADING>>'.length, trimmedLine.length - '<</PANEL-HEADING>>'.length).trim();
-                    html += `                <h5 class="dp-panel-heading">${currentHeading}</h5>\n`;
-                } else if (trimmedLine === '<<PANEL-CONTENT>>') {
+                    inPanelContent = false; // Reset content state for new panel
+                    continue;
+                } else if (trimmedLine.startsWith(PANEL_HEADING_TAG) && trimmedLine.endsWith(PANEL_HEADING_END_TAG)) {
+                    const headingText = trimmedLine.substring(PANEL_HEADING_TAG.length, trimmedLine.length - PANEL_HEADING_END_TAG.length).trim();
+                    html += `                <h5 class="dp-panel-heading">${headingText}</h5>\n`;
+                    continue;
+                } else if (trimmedLine === PANEL_CONTENT_START) {
                     html += `                <div class="dp-panel-content">\n                    <ul>\n`;
                     inPanelContent = true;
+                    continue;
                 } else if (trimmedLine.startsWith('* ') && inPanelContent) {
                     const listItemContent = trimmedLine.substring(2).trim();
                     html += `                        <li>${listItemContent}</li>\n`;
-                } else if (trimmedLine === '<</PANEL-CONTENT>>') {
+                    continue;
+                } else if (trimmedLine === PANEL_CONTENT_END) {
                     html += `                    </ul>\n                </div>\n`;
                     inPanelContent = false;
-                } else if (trimmedLine === '<</PANEL-GROUP>>') {
+                    continue;
+                } else if (trimmedLine === PANEL_GROUP_END) {
                     html += `            </div>\n`;
                     inPanelGroup = false;
-                } else if (trimmedLine === '<</ACCORDIAN>>') {
-                    // Final close, if any group was left open (shouldn't be if tags are balanced)
-                    if (inPanelGroup) {
-                         if (inPanelContent) html += '                    </ul>\n                </div>\n';
-                         html += '            </div>\n';
-                    }
-                    html += `        </div>`; // Match closing tag indentation from example
-                    return html;
-                }
-            }
-            return html; // Should ideally be returned after <</ACCORDIAN>>
-        }
-
-
-        // If not a pseudo-tag accordion, proceed with original detection logic
-        for (const line of lines) {
-            if (line.startsWith('#### ')) {
-                hasH4Headings = true;
-            } else if (line.match(/^(\s*)[*+-]\s*(.*)$/)) { // Bullet list item (covers nested due to simple line match)
-                hasAnyListItems = true;
-                const listItemContent = line.match(/^(\s*)[*+-]\s*(.*)$/)[2];
-                // Estimate lines for this item, ensuring it counts as at least 1 line.
-                totalEstimatedListLines += Math.max(1, Math.ceil(listItemContent.length / CHARS_PER_LINE));
-            } else if (line.match(/^\d+\.\s*(.*)$/)) { // Ordered list item
-                hasAnyListItems = true;
-                const listItemContent = line.match(/^\d+\.\s*(.*)$/)[1];
-                // Estimate lines for this item, ensuring it counts as at least 1 line.
-                totalEstimatedListLines += Math.max(1, Math.ceil(listItemContent.length / CHARS_PER_LINE));
-            }
-        }
-
-        // Condition for conversion to accordion HTML:
-        // 1. There are actual list items present.
-        // 2. The total estimated content lines from ALL list items collectively exceed the "page height" threshold.
-        // 3. Critically, H4 headings are present in the markdown input, as they are essential for the
-        //    DesignPlus Accordion structure (dp-panel-heading) as shown in the example output (2).
-        //    Without them, the accordion panels cannot be properly titled.
-        if (hasAnyListItems && totalEstimatedListLines >= MIN_EFFECTIVE_LINES_FOR_ACCORDION && hasH4Headings) {
-            // If the criteria are met, delegate the entire conversion to the dedicated accordion function.
-            // This function expects the markdown to be structured with #### headings.
-            return convertMarkdownToDesignPlusAccordion(input);
-        }
-        // --- END ACCORDION DETECTION LOGIC ---
-
-
-        // Existing line-by-line parsing logic for other markdown formats if no accordion is detected
-        let html = '';
-        let inWrapper = false;
-        let inBlock = false;
-        let inList = false;
-        let inOList = false;
-        let iconPlaceholders = [];
-        let iconCounter = 0;
-        const titleInput = document.getElementById("TextInput___0") || document.getElementById("wikipage-title-input");
-
-        let overrideTitle = titleInput.value
-        const boldRe = /\*\*(.*?)\*\*/g;
-        const italicRe = /\*(.*?)\*/g;
-        const ICON_HEADER_RE = /^<<ICON\s+(.+?)>>\s*###\s*(.+)$/;
-
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-
-            if (line === '<<DESIGN PLUS WRAPPER START>>') {
-                html += `<div id="dp-wrapper" class="dp-wrapper kl_uon" data-img-url="https://designtools.ciditools.com/css/images/banner_desert_sky.png">\n`;
-                inWrapper = true;
-                continue;
-            }
-
-            if (line === '<<MODULE PROGRESS BAR>>'){
-                if(inWrapper) {
-                    html += `<div class="dp-progress-placeholder dp-module-progress-completion" style="display: none;">Module Item Completion (browser only)</div>`;
                     continue;
                 }
             }
 
-            if (line === '<<DESIGN PLUS WRAPPER END>>') {
-                if (inList) html += '</ul>\n';
-                if (inBlock) html += '</div>\n';
-                html += '<p>&nbsp;</p>\n</div>';
-                inWrapper = false;
-                inBlock = false;
-                inList = false;
-                continue;
-            }
 
-            if (line === '<<CONTENT BLOCK START>>') {
-                if (inBlock) {
-                    if (inList) html += '</ul>\n';
-                    html += '</div>\n';
+            // Handle other DesignPlus elements and general markdown
+            // These are processed only if not currently inside an accordion pseudo-block
+            if (!inAccordion) {
+                if (trimmedLine === '<<MODULE PROGRESS BAR>>'){
+                    html += `<div class="dp-progress-placeholder dp-module-progress-completion" style="display: none;">Module Item Completion (browser only)</div>`;
+                    continue;
+                }
+
+                if (trimmedLine === HEADER_START) {
+                    let title, pre1, pre2;
+                    if(overrideTitle) {
+                        overrideTitle = overrideTitle.trim();
+                        const ovParts = overrideTitle.split(':');
+                        pre1 = ovParts[0];
+                        pre2 = '';
+                        title = ovParts[1];
+                    } else {
+                         // Find the actual header line which is the next line
+                        const headerText = lines[++i]?.trim() || '';
+                        const [pre, ...titleParts] = headerText.split(':');
+                        const [pre3, ...pre2Parts] = pre.trim().split(' ');
+                        pre2 = pre2Parts.join(' ');
+                        title = titleParts.join(':').trim();
+                        pre1 = pre3;
+                    }
+                    html += `<header class="dp-header">\n<h2 class="dp-heading"><span class="dp-header-pre"> <span class="dp-header-pre-1">${pre1}</span> <span class="dp-header-pre-2">${pre2}</span> </span> <span class="dp-header-title">${title}</span></h2>\n</header>\n`;
+                    if (lines[i + 1]?.trim() === HEADER_END) i++; // Skip the explicit end tag
+                    continue;
+                }
+
+                const iconHeaderMatch = trimmedLine.match(ICON_HEADER_RE);
+                if (iconHeaderMatch) {
+                    const icon = iconHeaderMatch[1];
+                    const heading = iconHeaderMatch[2];
+                    const placeholder = `<!-- ICON_PLACEHOLDER_${iconCounter} -->`;
+                    html += `${placeholder}<h3>${heading}</h3>\n`;
+                    iconPlaceholders.push({ placeholder, icon });
+                    iconCounter++;
+                    continue;
+                }
+
+                const headingMatch = trimmedLine.match(/^(#+)\s*(.*)$/);
+                if (headingMatch) {
+                    const level = headingMatch[1].length;
+                    const headingText = headingMatch[2].trim();
+                    html += `<h${level}>${headingText}</h${level}>\n`;
+                    continue;
+                }
+
+                // Handle standard lists (outside accordion panels)
+                if (trimmedLine.startsWith('1. ')) {
+                    if (!inOList) { html += '<ol>\n'; inOList = true; }
+                    let item = trimmedLine.substring(2).replace(boldRe, '<strong>$1</strong>').replace(italicRe, '<em>$1</em>');
+                    html += `<li>${item}</li>\n`;
+                    continue;
+                } else if (inOList && !trimmedLine.match(/^\d+\.\s/)) { // If previously in ordered list, but current line is not an item
+                    html += '</ol>\n';
+                    inOList = false;
+                }
+
+                if (trimmedLine.startsWith('* ') || trimmedLine.startsWith('- ') || trimmedLine.startsWith('+ ')) {
+                    if (!inList) { html += '<ul>\n'; inList = true; }
+                    let item = trimmedLine.substring(2).replace(boldRe, '<strong>$1</strong>').replace(italicRe, '<em>$1</em>');
+                    html += `<li>${item}</li>\n`;
+                    continue;
+                } else if (inList && !trimmedLine.match(/^[*+-]\s/)) { // If previously in unordered list, but current line is not an item
+                    html += '</ul>\n';
                     inList = false;
                 }
-                html += '<div class="dp-content-block">\n';
-                inBlock = true;
-                continue;
-            }
 
-            if (line === '<<CONTENT BLOCK END>>') {
-                if (inList) html += '</ul>\n';
-                html += '</div>\n';
-                inBlock = false;
-                inList = false;
-                continue;
-            }
-
-            if (line === '<<HEADER START>>') {
-                let title, pre1, pre2
-                if(overrideTitle) {
-                    overrideTitle = overrideTitle.trim()
-                    const ovParts = overrideTitle.split(':')
-                    pre1 = ovParts[0]
-                    pre2 = ''
-                    title = ovParts[1]
+                // Handle paragraphs
+                let formatted = trimmedLine.replace(boldRe, '<strong>$1</strong>').replace(italicRe, '<em>$1</em>');
+                if (formatted) {
+                    html += `<p>${formatted}</p>\n`;
                 }
-
-
-                const headerText = lines[++i]?.trim() || '';
-                const [pre, ...titleParts] = headerText.split(':');
-                const [pre3, ...pre2Parts] = pre.trim().split(' ');
-                pre2 = pre2Parts.join(' ');
-
-                title = titleParts.join(':').trim();
-                pre1 = pre3
-
-                html += `<header class="dp-header">\n<h2 class="dp-heading"><span class="dp-header-pre"> <span class="dp-header-pre-1">${pre1}</span> <span class="dp-header-pre-2">${pre2}</span> </span> <span class="dp-header-title">${title}</span></h2>\n</header>\n`;
-
-                // Skip <<HEADER END>> if it's there
-                if (lines[i + 1]?.trim() === '<<HEADER END>>') i++;
-
-                continue;
             }
+        } // End of main parsing loop
 
-            const iconHeaderMatch = line.match(ICON_HEADER_RE);
-            if (iconHeaderMatch) {
-                const icon = iconHeaderMatch[1];
-                const heading = iconHeaderMatch[2];
-                const placeholder = `<!-- ICON_PLACEHOLDER_${iconCounter} -->`;
-                html += `${placeholder}<h3>${heading}</h3>\n`;
-                iconPlaceholders.push({ placeholder, icon });
-                iconCounter++;
-                continue;
-            }
-
-            // Handles general headings not necessarily within DesignPlus content blocks
-            const headingMatch = line.match(/^(#+)\s*(.*)$/);
-            if (headingMatch) {
-                const level = headingMatch[1].length;
-                const headingText = headingMatch[2].trim();
-                html += `<h${level}>${headingText}</h${level}>\n`;
-                continue;
-            }
-
-
-            if (line.startsWith('1. ')) {
-                if (!inOList) {
-                    html += '<ol>\n';
-                    inOList = true;
-                }
-                let item = line.slice(2).replace(boldRe, '<strong>$1</strong>').replace(italicRe, '<em>$1</em>');
-                html += `<li>${item}</li>\n`;
-                continue;
-            } else if (inOList) {
-                html += '</ol>\n';
-                inOList = false;
-            }
-
-            if (line.startsWith('* ') || line.startsWith('- ') || line.startsWith('+ ')) {
-                if (!inList) {
-                    html += '<ul>\n';
-                    inList = true;
-                }
-                let item = line.slice(2).replace(boldRe, '<strong>$1</strong>').replace(italicRe, '<em>$1</em>');
-                html += `<li>${item}</li>\n`;
-                continue;
-            } else if (inList) {
-                html += '</ul>\n';
-                inList = false;
-            }
-
-            let formatted = line.replace(boldRe, '<strong>$1</strong>').replace(italicRe, '<em>$1</em>');
-            // Ensure paragraphs are created only for actual text, not just empty lines that become '&nbsp;'
-            if (formatted) {
-                html += `<p>${formatted}</p>\n`;
-            }
-        }
-
-        if (inList) html += '</ul>\n';
-        if (inOList) html += '</ol>\n';
-        if (inBlock) html += '</div>\n';
-        if (inWrapper) html += '<p>&nbsp;</p>\n</div>';
 
         // Post-process icon placeholders
         iconPlaceholders.forEach(({ placeholder, icon }) => {
             const iconHTML = `<h3 class="dp-has-icon"><i class="${icon}"><span class="dp-icon-content" style="display: none;">&nbsp;</span></i>`;
             html = html.replace(placeholder + '<h3', iconHTML + '<h3');
-            html = html.replace(`${iconHTML}<h3`, `${iconHTML}`); // Fix potential double h3 if regex was too broad
+            html = html.replace(`${iconHTML}<h3`, `${iconHTML}`);
         });
 
         return html;
@@ -607,21 +603,11 @@
 
         option1.onclick = () => {
             waitForIframe(iframe => {
-                // Check if the content is wrapped in a DesignPLUS Accordion, or a general DesignPLUS wrapper
-                const wrapper = iframe.contentDocument.body; // Target the body to find either dp-wrapper or dp-panels-wrapper
-                if (!wrapper) return alert('No DesignPLUS content found.');
+                // Pass the iframe's body to convertToMarkdown to ensure all top-level elements are captured
+                const contentWrapper = iframe.contentDocument.body;
+                if (!contentWrapper) return alert('No DesignPLUS content found.');
 
-                const accordionElement = wrapper.querySelector('.dp-panels-wrapper.dp-accordion-default');
-                let md;
-                if (accordionElement) {
-                    md = `${DESIGN_WRAPPER_START}\n\n${convertAccordionToMarkdownPseudoTags(accordionElement)}${DESIGN_WRAPPER_END}\n`;
-                } else {
-                    // Fallback to existing convertToMarkdown if not an accordion
-                    const dpWrapper = wrapper.querySelector('#dp-wrapper');
-                    if (!dpWrapper) return alert('No DesignPLUS wrapper found.');
-                    md = convertToMarkdown(dpWrapper);
-                }
-
+                const md = convertToMarkdown(contentWrapper);
                 const fileName = getFileNameFromBreadcrumbs();
                 downloadMarkdown(fileName, md);
                 menu.style.display = 'none';
