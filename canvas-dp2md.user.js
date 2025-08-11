@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Canvas DesignPlus to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      1.4 // Increased version due to critical nesting fix
+// @version      1.32 // Increased version due to critical nesting fix
 // @description  Convert to or from DesignPLUS HTML in Canvas to or from Markdown with custom markers, handling mixed and nested content.
 // @author       Paul Sijpkes
 // @match        https://*/courses/*/pages/*/edit
