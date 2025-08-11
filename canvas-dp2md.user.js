@@ -67,7 +67,7 @@
             if (blockId) md += `<!-- dp-id: ${blockId} -->\n`;
             md += `${BLOCK_START}\n\n`;
 
-            const heading = block.querySelector('h3');
+          /*  const heading = block.querySelector('h3');
             if (heading) {
                 const icon = heading.querySelector('i');
                 if (icon) {
@@ -75,6 +75,22 @@
                     md += `<<ICON ${iconClass}>> `;
                 }
                 md += `### ${heading.textContent.trim()}\n\n`;
+            }*/
+
+            const heading = block.querySelector('h1, h2, h3, h4, h5, h6');
+            if (heading) {
+                const level = parseInt(heading.tagName.substring(1), 10); // e.g., "H3" → 3
+                const hashes = '#'.repeat(level); // Generate correct number of hashes
+                const icon = heading.querySelector('i');
+            
+                if (icon) {
+                    const iconClass = [...icon.classList]
+                        .filter(c => c.startsWith('fa'))
+                        .join(' ');
+                    md += `<<ICON ${iconClass}>> `;
+                }
+            
+                md += `${hashes} ${heading.textContent.trim()}\n\n`;
             }
 
             block.querySelectorAll('p').forEach(p => {
@@ -89,8 +105,8 @@
                 md += '\n';
             });
 
-            block.querySelectorAll('ol').forEach(ul => {
-                ul.querySelectorAll('li').forEach((li, i) => {
+            block.querySelectorAll('ol').forEach(ol => {
+                ol.querySelectorAll('li').forEach((li, i) => {
                     md += `${i+1}. ${li.innerText.trim()}\n`;
                 });
                 md += '\n';
