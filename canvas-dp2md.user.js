@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Canvas DesignPlus to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      1.4
-// @description  Convert to or from DesignPLUS HTML in Canvas to or from Markdown with custom markers, handling mixed and nested content.
+// @version      1.5 
+// @description  Convert to or from DesignPLUS HTML in Canvas to or from Markdown with custom markers, handling mixed and nested content correctly.
 // @author       Paul Sijpkes
 // @match        https://*/courses/*/pages/*/edit
 // @match        https://*/courses/*/discussion_topics/*/edit
@@ -163,6 +163,7 @@
     function convertAccordionToMarkdownPseudoTags(accordionWrapper, indent = '') {
         let md = `${indent}${ACCORDION_START}\n`;
 
+        // Use :scope > to ensure only direct children .dp-panel-group are selected
         accordionWrapper.querySelectorAll(':scope > .dp-panel-group').forEach(panelGroup => {
             md += `${indent}  ${PANEL_GROUP_START}\n`;
 
@@ -191,18 +192,18 @@
      * Converts a DesignPLUS HTML wrapper element into a markdown string,
      * handling various DesignPLUS components including nested accordions.
      *
-     * @param {HTMLElement} wrapper The DesignPLUS wrapper element (#dp-wrapper) or document.body if elements are top-level.
+     * @param {HTMLElement} dpRootElement The main DesignPLUS root element (#dp-wrapper) or similar top-level container.
      * @returns {string} The generated markdown string.
      */
-    function convertToMarkdown(wrapper) {
+    function convertToMarkdown(dpRootElement) {
         let md = '';
 
-        // Add overall DESIGN_WRAPPER_START at the beginning
+        // Add overall DESIGN_WRAPPER_START at the beginning of the output
         md += `${DESIGN_WRAPPER_START}\n\n`;
 
-        // Check for and process top-level DesignPLUS structural elements in order of appearance
-        // Use Array.from(wrapper.children) to ensure processing in DOM order
-        Array.from(wrapper.children).forEach(child => {
+        // Iterate through all direct children of the dpRootElement to find DesignPlus components
+        // This ensures correct order and captures all top-level DP elements.
+        Array.from(dpRootElement.children).forEach(child => {
             if (child.classList.contains('dp-progress-completion')) {
                 md += `<<MODULE PROGRESS BAR>>\n`;
             } else if (child.classList.contains('dp-header')) {
@@ -212,16 +213,16 @@
                 md += `## ${pre}: ${title}\n`;
                 md += `${HEADER_END}\n\n`;
             } else if (child.classList.contains('dp-panels-wrapper') && child.classList.contains('dp-accordion-default')) {
-                // Top-level accordion
+                // Top-level accordion (not nested inside a content block)
                 md += convertAccordionToMarkdownPseudoTags(child, ''); // No extra indent for top-level
             } else if (child.classList.contains('dp-content-block')) {
-                // This is where most content lives, including potentially nested accordions
+                // This is a standard content block, which can contain various HTML elements, including nested accordions
                 const block = child;
                 const blockId = block.getAttribute('data-id');
                 if (blockId) md += `<!-- dp-id: ${blockId} -->\n`;
                 md += `${BLOCK_START}\n\n`;
 
-                // Process direct children of the content block to maintain order
+                // Iterate through children of the content block to maintain content order
                 Array.from(block.children).forEach(blockChild => {
                     if (blockChild.matches('h1, h2, h3, h4, h5, h6')) {
                         const level = parseInt(blockChild.tagName.substring(1), 10);
@@ -236,7 +237,7 @@
                         const text = blockChild.innerText.trim();
                         if (text) md += `${text}\n\n`;
                     } else if (blockChild.matches('ul, ol')) {
-                        // Handle standard lists within content blocks
+                        // Handle standard unordered/ordered lists within content blocks
                         const listTag = blockChild.tagName.toLowerCase();
                         Array.from(blockChild.children).forEach((li, i) => {
                             if (listTag === 'ol') {
@@ -257,13 +258,23 @@
                         if (href && text) md += `[${text}](${href})\n\n`;
                     } else if (blockChild.classList.contains('dp-panels-wrapper') && blockChild.classList.contains('dp-accordion-default')) {
                         // Nested accordion inside a content block
-                        md += convertAccordionToMarkdownPseudoTags(blockChild, '  '); // Indent for nesting
+                        // Pass an indent string to indicate nesting level in markdown.
+                        md += convertAccordionToMarkdownPseudoTags(blockChild, '  ');
                     }
-                    // Add other HTML elements that might be direct children of dp-content-block here
+                    // TODO: Add handling for other HTML elements that might be direct children of dp-content-block
                 });
                 md += `${BLOCK_END}\n\n`;
+            } else if (child.tagName === 'P' && child.textContent.trim() === '&nbsp;') {
+                // Ignore the common <p>&nbsp;</p> at the very end of dp-wrapper
+                // This is a heuristic, consider if other <p>&nbsp;</p> should be kept
+                if (child === dpRootElement.lastElementChild) {
+                    // Do nothing for the last element if it's just a spacer paragraph
+                } else {
+                    md += `\n`; // Convert to a blank line
+                }
             }
-            // Add other top-level content structures here if they exist beyond header/progress/content-block/accordion
+            // TODO: Add conditions for any other top-level content structures if they exist,
+            // beyond header/progress/content-block/accordion (e.g., custom HTML div wrappers)
         });
 
         // Add overall DESIGN_WRAPPER_END at the end
@@ -301,8 +312,8 @@
         const ICON_HEADER_RE = /^<<ICON\s+(.+?)>>\s*###\s*(.+)$/;
 
         // --- ACCORDION AUTOCONVERSION DETECTION LOGIC ---
-        // This runs only if NO pseudo-tags are detected in the entire input,
-        // to auto-convert appropriate markdown (#### + lengthy lists) to accordion HTML.
+        // This runs only if NO explicit accordion pseudo-tags (<<ACCORDIAN>>) are found in the input.
+        // It allows markdown structured with '#### heading' + lengthy lists to be auto-converted.
         let isPseudoTagAccordionPresent = input.includes(ACCORDION_START);
         let runAutoAccordionConversion = false;
 
@@ -337,15 +348,15 @@
         // --- END ACCORDION AUTOCONVERSION DETECTION LOGIC ---
 
 
-        // If auto-conversion is triggered for the entire input, perform it and return early.
-        // This assumes the entire content is meant to be one large accordion structure.
-        // This handles cases like example (1) converting to example (2).
+        // If auto-conversion is triggered AND no explicit pseudo-tags are present,
+        // convert the entire original markdown input (assuming it's a pure accordion structure)
+        // and return early. This handles cases like example (1) converting to example (2).
         if (runAutoAccordionConversion) {
             return convertMarkdownToDesignPlusAccordion(input);
         }
 
 
-        // Main parsing loop for all other markdown, including explicit pseudo-tags
+        // Main parsing loop for all other markdown, including explicit pseudo-tags and mixed content
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i]; // Use original line including leading spaces for parsing context
             const trimmedLine = line.trim();
@@ -384,7 +395,7 @@
                 // Close any list or nested accordion before block ends
                 if (inPanelContent) { html += '                    </ul>\n                </div>\n'; inPanelContent = false; }
                 if (inPanelGroup) { html += '            </div>\n'; inPanelGroup = false; }
-                if (inAccordion) { html += '        </div>\n'; inAccordion = false; }
+                if (inAccordion) { html += '        </div>\n'; inAccordion = false; } // Close nested accordion
                 if (inList) { html += '</ul>\n'; inList = false; }
                 if (inOList) { html += '</ol>\n'; inOList = false; }
 
@@ -401,14 +412,14 @@
 
                 // Determine indentation for correct HTML nesting.
                 // If we're inside a block, indent accordingly.
-                const accordionIndent = inBlock ? '    ' : '';
+                const accordionIndent = inBlock ? '    ' : ''; // Adjust based on expected nesting depth
                 html += `${accordionIndent}<div class="dp-panels-wrapper dp-accordion-default dp-panel-heading-text-start">\n`;
                 inAccordion = true;
                 continue;
             } else if (trimmedLine === ACCORDION_END) {
                 if (inPanelContent) { html += '                    </ul>\n                </div>\n'; inPanelContent = false; }
                 if (inPanelGroup) { html += '            </div>\n'; inPanelGroup = false; }
-                const accordionIndent = inBlock ? '    ' : '';
+                const accordionIndent = inBlock ? '    ' : ''; // Match opening indent
                 html += `${accordionIndent}</div>\n`;
                 inAccordion = false;
                 continue;
@@ -603,11 +614,22 @@
 
         option1.onclick = () => {
             waitForIframe(iframe => {
-                // Pass the iframe's body to convertToMarkdown to ensure all top-level elements are captured
-                const contentWrapper = iframe.contentDocument.body;
-                if (!contentWrapper) return alert('No DesignPLUS content found.');
+                // IMPORTANT FIX: Target the actual #dp-wrapper, as it's the root for DP content.
+                let dpRootElement = iframe.contentDocument.querySelector('#dp-wrapper');
 
-                const md = convertToMarkdown(contentWrapper);
+                // Fallback: If #dp-wrapper is not found, it might be a simpler page where DP elements
+                // are direct children of the body. In this case, use the body as the root.
+                if (!dpRootElement) {
+                    console.warn("DP Root #dp-wrapper not found, trying iframe body as root.");
+                    dpRootElement = iframe.contentDocument.body;
+                }
+
+                if (!dpRootElement) {
+                    alert('No DesignPLUS content found within #dp-wrapper or iframe body.');
+                    return;
+                }
+
+                const md = convertToMarkdown(dpRootElement);
                 const fileName = getFileNameFromBreadcrumbs();
                 downloadMarkdown(fileName, md);
                 menu.style.display = 'none';
