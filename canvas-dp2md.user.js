@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Canvas DesignPlus to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      1.5 
+// @version      1.6 
 // @description  Convert to or from DesignPLUS HTML in Canvas to or from Markdown with custom markers, handling mixed and nested content correctly.
 // @author       Paul Sijpkes
 // @match        https://*/courses/*/pages/*/edit
@@ -302,6 +302,7 @@
         let inPanelContent = false;
         let inList = false; // For standard UL/OL outside accordion
         let inOList = false; // For standard OL outside accordion
+        let titleAdded = false;
 
         let iconPlaceholders = [];
         let iconCounter = 0;
@@ -468,14 +469,13 @@
 
                 if (trimmedLine === HEADER_START) {
                     let title, pre1, pre2;
-                    if(overrideTitle) {
+                    if (overrideTitle) {
                         overrideTitle = overrideTitle.trim();
                         const ovParts = overrideTitle.split(':');
                         pre1 = ovParts[0];
                         pre2 = '';
                         title = ovParts[1];
                     } else {
-                         // Find the actual header line which is the next line
                         const headerText = lines[++i]?.trim() || '';
                         const [pre, ...titleParts] = headerText.split(':');
                         const [pre3, ...pre2Parts] = pre.trim().split(' ');
@@ -484,14 +484,28 @@
                         pre1 = pre3;
                     }
                     html += `<header class="dp-header">\n<h2 class="dp-heading"><span class="dp-header-pre"> <span class="dp-header-pre-1">${pre1}</span> <span class="dp-header-pre-2">${pre2}</span> </span> <span class="dp-header-title">${title}</span></h2>\n</header>\n`;
-                    if (lines[i + 1]?.trim() === HEADER_END) i++; // Skip the explicit end tag
+
+                    // Skip everything until HEADER_END
+                    while (i + 1 < lines.length && lines[i + 1].trim() !== HEADER_END) {
+                        i++;
+                    }
+                    // Skip the HEADER_END itself
+                    if (i + 1 < lines.length && lines[i + 1].trim() === HEADER_END) {
+                        i++;
+                    }
                     continue;
                 }
 
                 const iconHeaderMatch = trimmedLine.match(ICON_HEADER_RE);
                 if (iconHeaderMatch) {
-                    const icon = iconHeaderMatch[1];
-                    const heading = iconHeaderMatch[2];
+                    const icon = iconHeaderMatch[1].trim();
+                    let heading = iconHeaderMatch[2].trim();
+
+                    // Remove any accidental Markdown blockquote marker
+                    if (heading.startsWith('>')) {
+                        heading = heading.replace(/^>\s*/, '');
+                    }
+
                     const placeholder = `<!-- ICON_PLACEHOLDER_${iconCounter} -->`;
                     html += `${placeholder}<h3>${heading}</h3>\n`;
                     iconPlaceholders.push({ placeholder, icon });
@@ -539,9 +553,10 @@
 
         // Post-process icon placeholders
         iconPlaceholders.forEach(({ placeholder, icon }) => {
-            const iconHTML = `<h3 class="dp-has-icon"><i class="${icon}"><span class="dp-icon-content" style="display: none;">&nbsp;</span></i>`;
-            html = html.replace(placeholder + '<h3', iconHTML + '<h3');
-            html = html.replace(`${iconHTML}<h3`, `${iconHTML}`);
+            html = html.replace(
+                new RegExp(`${placeholder}<h3>(.*?)</h3>`),
+                `<h3 class="dp-has-icon"><i class="${icon}"><span class="dp-icon-content" style="display: none;">&nbsp;</span></i>$1</h3>`
+            );
         });
 
         return html;
