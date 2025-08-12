@@ -63,24 +63,35 @@
         }
 
         function parseListToHtml(listMarkdownLines) {
-            let html = '<ul>';
-            const listItemRegex = /^(\s*)[*+-]\s*(.*)$/;
-            const olListItemRegex = /^\d+\.\s*(.*)$/;
+            if (listMarkdownLines.length === 0) {
+                return '';
+            }
+
+            const bulletRegex = /^(\s*)[*+-]\s*(.*)$/;
+            const numberRegex = /^\s*\d+\.\s*(.*)$/;
+
+            // Determine if it's ordered or unordered based on first item
+            let isOrdered = numberRegex.test(listMarkdownLines[0]);
+            let html = isOrdered ? '<ol>' : '<ul>';
 
             for (const line of listMarkdownLines) {
                 let content = '';
-                const listItemMatch = line.match(listItemRegex);
-                const olListItemMatch = line.match(olListItemRegex);
-
-                if (listItemMatch) {
-                    content = encodeHtmlEntities(listItemMatch[2].trim());
-                    html += `\n                        <li>${content}</li>`;
-                } else if (olListItemMatch) {
-                    content = encodeHtmlEntities(olListItemMatch[1].trim());
-                    html += `\n                        <li>${content}</li>`;
+                if (isOrdered) {
+                    const match = line.match(numberRegex);
+                    if (match) {
+                        content = encodeHtmlEntities(match[1].trim());
+                        html += `\n    <li>${content}</li>`;
+                    }
+                } else {
+                    const match = line.match(bulletRegex);
+                    if (match) {
+                        content = encodeHtmlEntities(match[2].trim());
+                        html += `\n    <li>${content}</li>`;
+                    }
                 }
             }
-            html += '\n                    </ul>';
+
+            html += isOrdered ? '\n</ol>' : '\n</ul>';
             return html;
         }
 
