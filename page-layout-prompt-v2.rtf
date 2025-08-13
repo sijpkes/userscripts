@@ -7,26 +7,26 @@ Generate weekly course pages in a structured, pseudo-Markdown format suitable fo
 Output Requirements
 You must follow this exact structure for each weekly course page:
 
-<<DESIGN PLUS WRAPPER START>>
+<<DP WRAPPER>>
 <<MODULE PROGRESS BAR>>
 
-<<HEADER START>>
+<<HEADER>>
 Week [X]: [Topic Title]
-<<HEADER END>>
+<</HEADER>>
 
-<<CONTENT BLOCK START>>
+<<CONTENT BLOCK>>
 <mark style='background-color: yellow'>=== Course Coordinator to review this page === remove this message once reviewed ===</mark>
-<<CONTENT BLOCK END>>
+<</CONTENT BLOCK>>
 
-<<CONTENT BLOCK START>>
+<<CONTENT BLOCK>>
 <<ICON fa fa-[icon-name]>> ### [Activity Title]
 [Content]
-<<CONTENT BLOCK END>>
+<</CONTENT BLOCK>>
 
 ...
 (repeat content blocks as needed, including those containing accordions)
 
-<<DESIGN PLUS WRAPPER END>>
+<</DP WRAPPER>>
 
 Detailed Instructions
 
@@ -82,35 +82,36 @@ For context or clarity, you may consult https://wikipedia.org.
 
 Accordion Panels
 
-Accordions must only appear within a <<CONTENT BLOCK START>> and <<CONTENT BLOCK END>> wrapper.
+Accordions must only appear within a <<CONTENT BLOCK>> and <</CONTENT BLOCK>> wrapper.
 
 Use accordions only for lists or content sections that are longer than 3 points AND contain more than 50 words of text.
 
-To create an accordion section, wrap the content within <<DESIGN PLUS ACCORDION START>> and <<DESIGN PLUS ACCORDION END>>.
+To create an accordion section, wrap the content within <<ACCORDIAN>> and <</ACCORDIAN>>.
 
 Each accordion panel must begin with #### followed by the panel heading.
 
-All subsequent lines of text until the next #### or <<DESIGN PLUS ACCORDION END>> will be considered content for that specific panel. Each line of content within a panel will be converted into a separate paragraph.
+All subsequent lines of text until the next #### or <</ACCORDIAN>> will be considered content for that specific panel. Each line of content within a panel will be converted into a separate paragraph.
 
 Example of an accordion within a content block:
 
-code
-Code
-download
-content_copy
-expand_less
-
-<<CONTENT BLOCK START>>
+<<CONTENT BLOCK>>
 <<ICON fa fa-info-circle>> ### Important Concepts
-<<DESIGN PLUS ACCORDION START>>
-#### What is X?
-This panel explains the concept of X. It provides a detailed description of its properties and characteristics. This content is more than 50 words.
-
-#### How does Y work?
-This panel describes the operational mechanism of Y, including its various components and their interactions. It's crucial to understand this for the topic.
-Here's another line of content to ensure it meets the word count.
-<<DESIGN PLUS ACCORDION END>>
-<<CONTENT BLOCK END>>
+<<ACCORDIAN>>
+<<PANEL-GROUP>>
+<<PANEL-HEADING>>1. Database and Schema Setup<</PANEL-HEADING>>
+<<PANEL-CONTENT>>
+* Create the COMP1140 database using the provided RegSystem file.
+* Within your COMP1140 database, create a new schema named "University".
+<</PANEL-CONTENT>>
+<</PANEL-GROUP>>
+<<PANEL-GROUP>>
+<<PANEL-HEADING>>2. Table Migration<</PANEL-HEADING>>
+<<PANEL-CONTENT>>
+* Transfer the Student, Course, Semester, and Register tables into the "University" schema.
+<</PANEL-CONTENT>>
+<</PANEL-GROUP>>
+<</ACCORDIAN>>
+<</CONTENT BLOCK>>
 
 Output Format
 
