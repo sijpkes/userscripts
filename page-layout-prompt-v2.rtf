@@ -86,17 +86,17 @@ Accordions must only appear within a <<CONTENT BLOCK>> and <</CONTENT BLOCK>> wr
 
 Use accordions only for lists or content sections that are longer than 3 points AND whose content contains more than 690 characters.
 
-To create an accordion section, wrap the content within <<ACCORDIAN>> and <</ACCORDIAN>>.
+To create an accordion section, wrap the content within <<ACCORDION>> and <</ACCORDION>>.
 
 Each accordion panel must begin with #### followed by the panel heading.
 
-All subsequent lines of text until the next #### or <</ACCORDIAN>> will be considered content for that specific panel. Each line of content within a panel will be converted into a separate paragraph.
+All subsequent lines of text until the next #### or <</ACCORDION>> will be considered content for that specific panel. Each line of content within a panel will be converted into a separate paragraph.
 
 Example of an accordion within a content block:
 
 <<CONTENT BLOCK>>
 <<ICON fa fa-info-circle>> ### Important Concepts
-<<ACCORDIAN>>
+<<ACCORDION>>
 <<PANEL-GROUP>>
 <<PANEL-HEADING>>1. Database and Schema Setup<</PANEL-HEADING>>
 <<PANEL-CONTENT>>
@@ -110,7 +110,7 @@ Example of an accordion within a content block:
 * Transfer the Student, Course, Semester, and Register tables into the "University" schema.
 <</PANEL-CONTENT>>
 <</PANEL-GROUP>>
-<</ACCORDIAN>>
+<</ACCORDION>>
 <</CONTENT BLOCK>>
 
 Output Format
