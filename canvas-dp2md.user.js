@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Canvas DesignPlus to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      1.8
+// @version      1.10
 // @description  Convert DesignPLUS HTML in Canvas to/from Markdown with custom markers, handling mixed and nested content.
 // @author       Paul Sijpkes
 // @match        https://*/courses/*/pages/*/edit
@@ -16,14 +16,14 @@
 
     // --- Constants ---
     const TAGS = {
-        DESIGN_WRAPPER_START: '<<DESIGNPLUS WRAPPER START>>',
-        DESIGN_WRAPPER_END: '<<DESIGNPLUS WRAPPER END>>',
-        HEADER_START: '<<HEADER START>>',
-        HEADER_END: '<<HEADER END>>',
-        BLOCK_START: '<<CONTENT BLOCK START>>',
-        BLOCK_END: '<<CONTENT BLOCK END>>',
-        ACCORDION_START: '<<ACCORDIAN>>',
-        ACCORDION_END: '<</ACCORDIAN>>',
+        DESIGN_WRAPPER_START: '<<DP WRAPPER>>',
+        DESIGN_WRAPPER_END: '<</DP WRAPPER>>',
+        HEADER_START: '<<HEADER>>',
+        HEADER_END: '<</HEADER>>',
+        BLOCK_START: '<<CONTENT BLOCK>>',
+        BLOCK_END: '<</CONTENT BLOCK>>',
+        ACCORDION_START: '<<ACCORDION>>',
+        ACCORDION_END: '<</ACCORDION>>',
         PANEL_GROUP_START: '<<PANEL-GROUP>>',
         PANEL_GROUP_END: '<</PANEL-GROUP>>',
         PANEL_HEADING_TAG: '<<PANEL-HEADING>>',
@@ -34,6 +34,8 @@
         MODULE_PROGRESS_BAR: '<<MODULE PROGRESS BAR>>'
     };
 
+    const ICON_HEADER_RE = /^<<ICON\s+(.+?)>>\s*###\s*(.+)$/;
+    const boldRe = /\*\*(.*?)\*\*/g, italicRe = /\*(.*?)\*/g;
     // --- Utility Functions ---
     function encodeHtmlEntities(str) {
         return str.replace(/&/g, '&amp;')
@@ -85,7 +87,12 @@
                 }
             }
             if (heading) {
-                let contentHtml = contentLines.map(l => `<p>${encodeHtmlEntities(l.trim())}</p>`).join('\n');
+                // Apply basic markdown for bold/italic within contentHtml for auto-accordion
+                let contentHtml = contentLines.map(l => {
+                    let formattedLine = encodeHtmlEntities(l.trim());
+                    formattedLine = formattedLine.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*(.*?)\*/g, '<em>$1</em>');
+                    return `<p>${formattedLine}</p>`;
+                }).join('\n');
                 panels.push({ heading, contentHtml });
             }
         }
@@ -100,10 +107,9 @@
                 </div>
             </div>`;
         }
-        fullHtml += `\n        </div>`;
-        return fullHtml;
-    }
-
+         fullHtml += `\n        </div>`;
+         return fullHtml;
+     }
     // --- Markdown Extraction ---
     function convertListToMarkdown(listElement, indent = '') {
         let md = '';
@@ -205,55 +211,46 @@
         const extractedListsData = [];
         const processedOutputLines = [];
         let currentListBlockItems = [], currentListBlockType = null, currentListBlockPlaceholder = null;
-        let olCount = 0, ulCount = 0, i = 0;
-        while (i < lines.length) {
+        let listCount = 0; // Generic counter for all lists
+
+        for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             const olMatch = line.match(/^(\s*)(\d+)\.\s*(.*)/);
             const ulMatch = line.match(/^(\s*)([*+-])\s*(.*)/);
+
             if (olMatch || ulMatch) {
                 const itemType = olMatch ? 'OL' : 'UL';
-                const itemInitialIndentLen = olMatch ? olMatch[1].length : ulMatch[1].length;
-                const itemContentStartText = olMatch ? olMatch[3] : ulMatch[3];
-                const markerLen = olMatch ? olMatch[2].length + 2 : 2;
-                const itemContentEffectiveIndent = itemInitialIndentLen + markerLen;
-                let isNewListBlock = false;
-                if (currentListBlockItems.length > 0) {
-                    if (itemType !== currentListBlockType) isNewListBlock = true;
-                    else if (itemType === 'OL' && olMatch && parseInt(olMatch[2], 10) !== currentListBlockItems.length + 1) isNewListBlock = true;
-                } else isNewListBlock = true;
+                const isNewListBlock = currentListBlockType !== itemType || currentListBlockItems.length === 0;
+
                 if (isNewListBlock) {
                     if (currentListBlockItems.length > 0) {
-                        extractedListsData.push({ type: currentListBlockType, rawLines: currentListBlockItems.slice() });
+                        // Finalize the current list block
+                        extractedListsData.push({
+                            type: currentListBlockType,
+                            rawLines: currentListBlockItems.slice(),
+                            lineNumber: processedOutputLines.length // Store the line number
+                        });
                         processedOutputLines.push(currentListBlockPlaceholder);
                     }
+
+                    // Start a new list block
                     currentListBlockItems = [];
                     currentListBlockType = itemType;
-                    if (itemType === 'OL') {
-                        olCount += 1;
-                        currentListBlockPlaceholder = `__OL_${olCount}__`;
-                    } else {
-                        ulCount += 1;
-                        currentListBlockPlaceholder = `__UL_${ulCount}__`;
-                    }
+
+                    // Increment the generic counter and generate the placeholder
+                    listCount += 1;
+                    currentListBlockPlaceholder = `__LIST_${listCount}__`;
                 }
-                const currentItemFullContent = [itemContentStartText];
-                let j = i + 1;
-                while (j < lines.length) {
-                    const nextLine = lines[j];
-                    if (nextLine.match(/^\s*(\d+\.|\*|\-|\+)\s/)) break;
-                    const nextLineTrimStart = nextLine.trimStart();
-                    const nextLineIndent = nextLine.length - nextLineTrimStart.length;
-                    if (nextLineTrimStart === '') currentItemFullContent.push('');
-                    else if (nextLineIndent >= itemContentEffectiveIndent) currentItemFullContent.push(nextLineTrimStart);
-                    else break;
-                    j += 1;
-                }
+
                 currentListBlockItems.push(line);
-                for (let k = i + 1; k < j; k++) currentListBlockItems.push(lines[k]);
-                i = j - 1;
             } else {
                 if (currentListBlockItems.length > 0) {
-                    extractedListsData.push({ type: currentListBlockType, rawLines: currentListBlockItems.slice() });
+                    // Finalize the current list block
+                    extractedListsData.push({
+                        type: currentListBlockType,
+                        rawLines: currentListBlockItems.slice(),
+                        lineNumber: processedOutputLines.length // Store the line number
+                    });
                     processedOutputLines.push(currentListBlockPlaceholder);
                     currentListBlockItems = [];
                     currentListBlockType = null;
@@ -261,12 +258,18 @@
                 }
                 processedOutputLines.push(line);
             }
-            i += 1;
         }
+
+        // Finalize any remaining list block
         if (currentListBlockItems.length > 0) {
-            extractedListsData.push({ type: currentListBlockType, rawLines: currentListBlockItems.slice() });
+            extractedListsData.push({
+                type: currentListBlockType,
+                rawLines: currentListBlockItems.slice(),
+                lineNumber: processedOutputLines.length // Store the line number
+            });
             processedOutputLines.push(currentListBlockPlaceholder);
         }
+
         return [processedOutputLines.join('\n'), extractedListsData];
     }
 
@@ -314,14 +317,15 @@
     function convertExtractedListsToHtml(extractedListsData) {
         return extractedListsData.map(listData => {
             const nestedNodes = parseNestedListLines(listData.rawLines);
-            return renderNestedListHtml(nestedNodes, listData.type === 'OL' ? 'ol' : 'ul', '');
+            const listTag = listData.type === 'OL' ? 'ol' : 'ul'; // Decide list type based on `type`
+            return renderNestedListHtml(nestedNodes, listTag, '');
         });
     }
 
-    function insertHtmlListsIntoDocument(documentWithPlaceholders, htmlLists, extractedListsData) {
+    function insertHtmlListsIntoDocument(documentWithPlaceholders, htmlLists) {
         let finalDocument = documentWithPlaceholders;
         for (let i = 0; i < htmlLists.length; i++) {
-            const placeholder = `__${extractedListsData[i].type}_${i + 1}__`;
+            const placeholder = `__LIST_${i + 1}__`; // Generic placeholder
             if (finalDocument.includes(placeholder)) {
                 finalDocument = finalDocument.replace(placeholder, htmlLists[i]);
             } else {
@@ -335,11 +339,17 @@
     function parseDesignPlusMarkdownToHTML(input) {
         const lines = input.trim().split('\n');
         let html = '', inWrapper = false, inBlock = false, inAccordion = false, inPanelGroup = false, inPanelContent = false;
+        let inListInPanel = false; // NEW STATE VARIABLE to track <ul> presence within panel content
         let iconPlaceholders = [], iconCounter = 0;
-        const titleInput = document.getElementById("TextInput___0") || document.getElementById("wikipage-title-input");
-        let overrideTitle = titleInput ? titleInput.value : '';
-        const boldRe = /\*\*(.*?)\*\*/g, italicRe = /\*(.*?)\*/g;
-        const ICON_HEADER_RE = /^<<ICON\s+(.+?)>>\s*###\s*(.+)$/;
+        const titleInput = typeof document !== 'undefined' ? (document.getElementById("TextInput___0") || document.getElementById("wikipage-title-input")) : null;
+
+        // Define regex for bold and italic markdown
+        const boldRe = /\*\*(.*?)\*\*/g;
+        const italicRe = /\*(.*?)\*/g;
+        // Assuming ICON_HEADER_RE is defined elsewhere or not strictly needed for this problem
+        const ICON_HEADER_RE = /<<ICON\s+([^>]+)>>\s*(.*)/;
+
+
         const isPseudoTagAccordionPresent = input.includes(TAGS.ACCORDION_START);
         let runAutoAccordionConversion = false;
 
@@ -366,7 +376,10 @@
                 inWrapper = true; continue;
             }
             if (trimmedLine === TAGS.DESIGN_WRAPPER_END) {
-                if (inPanelContent) { html += '                    </ul>\n                </div>\n'; inPanelContent = false; }
+                if (inPanelContent) {
+                    if (inListInPanel) { html += '                    </ul>\n'; inListInPanel = false; }
+                    html += '                </div>\n'; inPanelContent = false;
+                }
                 if (inPanelGroup) { html += '            </div>\n'; inPanelGroup = false; }
                 if (inAccordion) { html += '        </div>\n'; inAccordion = false; }
                 if (inBlock) { html += '</div>\n'; inBlock = false; }
@@ -376,7 +389,10 @@
                 html += '<div class="dp-content-block">\n'; inBlock = true; continue;
             }
             if (trimmedLine === TAGS.BLOCK_END) {
-                if (inPanelContent) { html += '                    </ul>\n                </div>\n'; inPanelContent = false; }
+                if (inPanelContent) {
+                    if (inListInPanel) { html += '                    </ul>\n'; inListInPanel = false; }
+                    html += '                </div>\n'; inPanelContent = false;
+                }
                 if (inPanelGroup) { html += '            </div>\n'; inPanelGroup = false; }
                 if (inAccordion) { html += '        </div>\n'; inAccordion = false; }
                 html += '</div>\n'; inBlock = false; continue;
@@ -386,51 +402,84 @@
                 html += `${accordionIndent}<div class="dp-panels-wrapper dp-accordion-default dp-panel-heading-text-start">\n`;
                 inAccordion = true; continue;
             } else if (trimmedLine === TAGS.ACCORDION_END) {
-                if (inPanelContent) { html += '                    </ul>\n                </div>\n'; inPanelContent = false; }
+                if (inPanelContent) {
+                    if (inListInPanel) { html += '                    </ul>\n'; inListInPanel = false; }
+                    html += '                </div>\n'; inPanelContent = false;
+                }
                 if (inPanelGroup) { html += '            </div>\n'; inPanelGroup = false; }
                 const accordionIndent = inBlock ? '    ' : '';
                 html += `${accordionIndent}</div>\n`; inAccordion = false; continue;
             } else if (inAccordion) {
                 if (trimmedLine === TAGS.PANEL_GROUP_START) {
-                    if (inPanelGroup) {
-                        if (inPanelContent) html += '                    </ul>\n                </div>\n';
-                        html += '            </div>\n';
+                    if (inPanelContent) {
+                        if (inListInPanel) { html += '                    </ul>\n'; inListInPanel = false; }
+                        html += '                </div>\n'; // Close dp-panel-content div
+                        inPanelContent = false;
                     }
+                    if (inPanelGroup) { html += '            </div>\n'; } // Close previous panel group
                     html += `            <div class="dp-panel-group">\n`;
-                    inPanelGroup = true; inPanelContent = false; continue;
+                    inPanelGroup = true;
+                    // Reset inPanelContent and inListInPanel for a new panel group
+                    inPanelContent = false;
+                    inListInPanel = false;
+                    continue;
                 } else if (trimmedLine.startsWith(TAGS.PANEL_HEADING_TAG) && trimmedLine.endsWith(TAGS.PANEL_HEADING_END_TAG)) {
                     const headingText = trimmedLine.substring(TAGS.PANEL_HEADING_TAG.length, trimmedLine.length - TAGS.PANEL_HEADING_END_TAG.length).trim();
                     html += `                <h5 class="dp-panel-heading">${headingText}</h5>\n`; continue;
                 } else if (trimmedLine === TAGS.PANEL_CONTENT_START) {
-                    html += `                <div class="dp-panel-content">\n                    <ul>\n`; inPanelContent = true; continue;
-                } else if (trimmedLine.startsWith('* ') && inPanelContent) {
-                    const listItemContent = trimmedLine.substring(2).trim();
-                    html += `                        <li>${listItemContent}</li>\n`; continue;
+                    html += `                <div class="dp-panel-content">\n`;
+                    inPanelContent = true;
+                    inListInPanel = false; // Reset list state for new panel content
+                    continue;
                 } else if (trimmedLine === TAGS.PANEL_CONTENT_END) {
-                    html += `                    </ul>\n                </div>\n`; inPanelContent = false; continue;
+                    if (inListInPanel) { html += '                    </ul>\n'; inListInPanel = false; } // Close <ul> if it was open
+                    html += `                </div>\n`; // Close dp-panel-content div
+                    inPanelContent = false; continue;
                 } else if (trimmedLine === TAGS.PANEL_GROUP_END) {
+                    if (inPanelContent) {
+                        if (inListInPanel) { html += '                    </ul>\n'; inListInPanel = false; }
+                        html += '                </div>\n'; inPanelContent = false;
+                    }
                     html += `            </div>\n`; inPanelGroup = false; continue;
                 }
+                // Handle content WITHIN PANEL_CONTENT
+                else if (inPanelContent) {
+                    if (trimmedLine.startsWith('* ')) {
+                        if (!inListInPanel) { // If not already in a list, open <ul>
+                            html += `                    <ul>\n`;
+                            inListInPanel = true;
+                        }
+                        const listItemContent = trimmedLine.substring(2).trim();
+                        let formatted = listItemContent.replace(boldRe, '<strong>$1</strong>').replace(italicRe, '<em>$1</em>');
+                        html += `                        <li>${formatted}</li>\n`;
+                    } else {
+                        if (inListInPanel) { // If was in a list but current line is not a list item, close <ul>
+                            html += `                    </ul>\n`;
+                            inListInPanel = false;
+                        }
+                        // Handle general paragraph content
+                        if (trimmedLine) { // Only add paragraph if line is not empty
+                            let formatted = trimmedLine.replace(boldRe, '<strong>$1</strong>').replace(italicRe, '<em>$1</em>');
+                            html += `                    <p>${formatted}</p>\n`;
+                        }
+                    }
+                    continue; // Consume the line
+                }
             }
-            if (!inAccordion) {
+            if (!inAccordion) { // This block processes content outside of accordion tags
                 if (trimmedLine === TAGS.MODULE_PROGRESS_BAR) {
                     html += `<div class="dp-progress-placeholder dp-module-progress-completion" style="display: none;">Module Item Completion (browser only)</div>`; continue;
                 }
                 if (trimmedLine === TAGS.HEADER_START) {
                     let title, pre1, pre2;
-                    if (overrideTitle) {
-                        overrideTitle = overrideTitle.trim();
-                        const ovParts = overrideTitle.split(':');
-                        pre1 = ovParts[0]; pre2 = '';
-                        title = ovParts.slice(1).join(':').trim();
-                    } else {
-                        const headerText = lines[++i]?.trim() || '';
-                        const [pre, ...titleParts] = headerText.split(':');
-                        const preParts = pre.trim().split(' ');
-                        pre1 = preParts[0] || '';
-                        pre2 = preParts.slice(1).join(' ').trim();
-                        title = titleParts.join(':').trim();
-                    }
+
+                    const headerText = lines[++i]?.trim() || '';
+                    const [pre, ...titleParts] = headerText.split(':');
+                    const preParts = pre.trim().split(' ');
+                    pre1 = preParts[0] || '';
+                    pre2 = preParts.slice(1).join(' ').trim();
+                    title = titleParts.join(':').trim();
+
                     html += `<header class="dp-header">\n<h2 class="dp-heading"><span class="dp-header-pre"> <span class="dp-header-pre-1">${pre1}</span> <span class="dp-header-pre-2">${pre2}</span> </span> <span class="dp-header-title">${title}</span></h2>\n</header>\n`;
                     while (i + 1 < lines.length && lines[i + 1].trim() !== TAGS.HEADER_END) i++;
                     if (i + 1 < lines.length && lines[i + 1].trim() === TAGS.HEADER_END) i++;
@@ -441,6 +490,7 @@
                     const icon = iconHeaderMatch[1].trim();
                     let heading = iconHeaderMatch[2].trim();
                     if (heading.startsWith('>')) heading = heading.replace(/^>\s*/, '');
+                    if (heading.startsWith('#')) heading = heading.replace(/^#+\s*/, '');
                     const placeholder = `<!-- ICON_PLACEHOLDER_${iconCounter} -->`;
                     html += `${placeholder}<h3>${heading}</h3>\n`;
                     iconPlaceholders.push({ placeholder, icon });
@@ -462,8 +512,8 @@
                 `<h3 class="dp-has-icon"><i class="${icon}"><span class="dp-icon-content" style="display: none;">&nbsp;</span></i>$1</h3>`
             );
         });
-        return html;
-    }
+       return html;
+   }
 
     // --- File Handling ---
     function downloadMarkdown(filename, content) {
@@ -510,6 +560,23 @@
             }
         }
         return true;
+    }
+
+    /**
+ * Efficiently removes all "<p>&nbsp;</p>" tags from a given HTML string.
+ *
+ * @param {string} htmlString The input HTML string.
+ * @returns {string} The HTML string with all "<p>&nbsp;</p>" tags removed.
+ */
+    function removeEmptyParagraphsWithNBSP(htmlString) {
+        // Use a regular expression with the 'g' flag for global replacement.
+        // The '\s*' matches any whitespace character (space, tab, new line, etc.)
+        // zero or more times, making it robust against minor variations in whitespace.
+        // The 'i' flag (case-insensitive) is added for robustness, although 'p' tag is usually lowercase.
+        return htmlString.replace(
+            /<p[^>]*>(?:\s|&nbsp;|\u00A0|&#160;|&#xA0;)*<\/p>/gi,
+            ''
+        );
     }
 
     // --- UI ---
@@ -568,9 +635,14 @@
             uploadMarkdownFile(md => {
                 if (!validateMDSyntax(md)) return false;
                 const [mdWithPlaceholders, extractedListsData] = detectAndReplaceLists(md);
+                console.log('Placeholders:', extractedListsData.map((data, index) => `__${data.type}_${index + 1}__`));
+
                 const htmlWithPlaceholders = parseDesignPlusMarkdownToHTML(mdWithPlaceholders);
+
+                console.log('Document with placeholders:', htmlWithPlaceholders);
                 const htmlLists = convertExtractedListsToHtml(extractedListsData);
-                const finalHtml = insertHtmlListsIntoDocument(htmlWithPlaceholders, htmlLists, extractedListsData);
+                const preHtml = insertHtmlListsIntoDocument(htmlWithPlaceholders, htmlLists, extractedListsData);
+                const finalHtml = removeEmptyParagraphsWithNBSP(preHtml)
                 waitForIframe(iframe => {
                     iframe.contentDocument.body.innerHTML = finalHtml;
                     menu.style.display = 'none';
@@ -592,6 +664,5 @@
     window.addEventListener('load', () => {
         setTimeout(addDropdownButton, 1000);
     });
-    console.log('Placeholders:', extractedListsData.map((data, index) => `__${data.type}_${index + 1}__`));
-    console.log('Document with placeholders:', documentWithPlaceholders);
+
 })();
