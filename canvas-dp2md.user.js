@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Canvas DesignPlus to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      1.10
+// @version      1.11
 // @description  Convert DesignPLUS HTML in Canvas to/from Markdown with custom markers, handling mixed and nested content.
 // @author       Paul Sijpkes
 // @match        https://*/courses/*/pages/*/edit
@@ -107,9 +107,9 @@
                 </div>
             </div>`;
         }
-         fullHtml += `\n        </div>`;
-         return fullHtml;
-     }
+        fullHtml += `\n        </div>`;
+        return fullHtml;
+    }
     // --- Markdown Extraction ---
     function convertListToMarkdown(listElement, indent = '') {
         let md = '';
@@ -512,8 +512,8 @@
                 `<h3 class="dp-has-icon"><i class="${icon}"><span class="dp-icon-content" style="display: none;">&nbsp;</span></i>$1</h3>`
             );
         });
-       return html;
-   }
+        return html;
+    }
 
     // --- File Handling ---
     function downloadMarkdown(filename, content) {
@@ -526,7 +526,9 @@
 
     function uploadMarkdownFile(callback) {
         const input = document.createElement('input');
-        input.type = 'file'; input.accept = '.md,text/markdown';
+        input.type = 'file';
+        // Modified line: Add .txt and text/plain to the accept attribute
+        input.accept = '.md,.txt,text/markdown,text/plain';
         input.addEventListener('change', e => {
             const file = e.target.files[0];
             const reader = new FileReader();
