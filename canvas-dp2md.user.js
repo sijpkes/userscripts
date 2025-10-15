@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Canvas DesignPlus to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  Convert DesignPLUS HTML in Canvas to/from Markdown with custom markers, handling mixed and nested content.
 // @author       Paul Sijpkes
 // @match        https://*/courses/*/pages/*/edit
@@ -16,25 +16,25 @@
 
     // --- Constants ---
     const TAGS = {
-        DESIGN_WRAPPER_START: '<<DP WRAPPER>>',
-        DESIGN_WRAPPER_END: '<</DP WRAPPER>>',
-        HEADER_START: '<<HEADER>>',
-        HEADER_END: '<</HEADER>>',
-        BLOCK_START: '<<CONTENT BLOCK>>',
-        BLOCK_END: '<</CONTENT BLOCK>>',
-        ACCORDION_START: '<<ACCORDION>>',
-        ACCORDION_END: '<</ACCORDION>>',
-        PANEL_GROUP_START: '<<PANEL-GROUP>>',
-        PANEL_GROUP_END: '<</PANEL-GROUP>>',
-        PANEL_HEADING_TAG: '<<PANEL-HEADING>>',
-        PANEL_HEADING_END_TAG: '<</PANEL-HEADING>>',
-        PANEL_CONTENT_START: '<<PANEL-CONTENT>>',
-        PANEL_CONTENT_END: '<</PANEL-CONTENT>>',
-        ICON_REGEX: /<<ICON\s+([^>]+)>>/,
-        MODULE_PROGRESS_BAR: '<<MODULE PROGRESS BAR>>'
+        DESIGN_WRAPPER_START: '[DP WRAPPER]',
+        DESIGN_WRAPPER_END: '[/DP WRAPPER]',
+        HEADER_START: '[HEADER]',
+        HEADER_END: '[/HEADER]',
+        BLOCK_START: '[CONTENT BLOCK]',
+        BLOCK_END: '[/CONTENT BLOCK]',
+        ACCORDION_START: '[ACCORDION]',
+        ACCORDION_END: '[/ACCORDION]',
+        PANEL_GROUP_START: '[PANEL-GROUP]',
+        PANEL_GROUP_END: '[/PANEL-GROUP]',
+        PANEL_HEADING_TAG: '[PANEL-HEADING]',
+        PANEL_HEADING_END_TAG: '[/PANEL-HEADING]',
+        PANEL_CONTENT_START: '[PANEL-CONTENT]',
+        PANEL_CONTENT_END: '[/PANEL-CONTENT]',
+        ICON_REGEX: /[ICON\s+([^>]+)]/,
+        MODULE_PROGRESS_BAR: '[MODULE PROGRESS BAR]'
     };
 
-    const ICON_HEADER_RE = /^<<ICON\s+(.+?)>>\s*###\s*(.+)$/;
+    const ICON_HEADER_RE = /^[ICON\s+(.+?)]\s*###\s*(.+)$/;
     const boldRe = /\*\*(.*?)\*\*/g, italicRe = /\*(.*?)\*/g;
     // --- Utility Functions ---
     function encodeHtmlEntities(str) {
@@ -174,7 +174,7 @@
                         const icon = blockChild.querySelector('i');
                         if (icon) {
                             const iconClass = [...icon.classList].filter(c => c.startsWith('fa')).join(' ');
-                            md += `<<ICON ${iconClass}>> `;
+                            md += `[ICON ${iconClass}] `;
                         }
                         md += `${hashes} ${blockChild.textContent.trim()}\n\n`;
                     } else if (blockChild.matches('p')) {
@@ -347,7 +347,7 @@
         const boldRe = /\*\*(.*?)\*\*/g;
         const italicRe = /\*(.*?)\*/g;
         // Assuming ICON_HEADER_RE is defined elsewhere or not strictly needed for this problem
-        const ICON_HEADER_RE = /<<ICON\s+([^>]+)>>\s*(.*)/;
+        const ICON_HEADER_RE = /[ICON\s+([^>]+)]\s*(.*)/;
 
 
         const isPseudoTagAccordionPresent = input.includes(TAGS.ACCORDION_START);
@@ -550,10 +550,10 @@
             TAGS.HEADER_START, TAGS.HEADER_END,
             TAGS.MODULE_PROGRESS_BAR
         ]);
-        const ICON_HEADER_RE = /^<<ICON\s+(.+?)>>\s*###\s*(.+)$/;
+        const ICON_HEADER_RE = /^[ICON\s+(.+?)]\s*###\s*(.+)$/;
         for (let i = 0; i < lines.length; i++) {
             const lineNumber = i + 1, line = lines[i], trimmedLine = line.trim();
-            if (trimmedLine.includes('<<') && trimmedLine.includes('>>')) {
+            if (trimmedLine.includes('[') && trimmedLine.includes(']')) {
                 if (validExactTags.has(trimmedLine)) continue;
                 if (trimmedLine.startsWith(TAGS.PANEL_HEADING_TAG) && trimmedLine.endsWith(TAGS.PANEL_HEADING_END_TAG) && trimmedLine.length > TAGS.PANEL_HEADING_TAG.length + TAGS.PANEL_HEADING_END_TAG.length) continue;
                 if (ICON_HEADER_RE.test(trimmedLine)) continue;
