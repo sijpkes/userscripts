@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Canvas DesignPlus to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      1.5
 // @description  Convert DesignPLUS HTML in Canvas to/from Markdown with custom markers, handling mixed and nested content.
 // @author       Paul Sijpkes
 // @match        https://*/courses/*/pages/*/edit
@@ -11,524 +11,408 @@
 // @downloadURL  https://raw.githubusercontent.com/sijpkes/userscripts/main/canvas-dp2md.user.js
 // ==/UserScript==
 
-(function () {
+(function() {
     'use strict';
 
-    // --- Constants ---
+    // -------------------------------------------------------------------------
+    // 1. CONSTANTS (XML-style Custom Tags)
+    // -------------------------------------------------------------------------
+
+    // Using angle brackets for custom tags to prevent conflicts with standard Markdown.
     const TAGS = {
-        DESIGN_WRAPPER_START: '[DP WRAPPER]',
-        DESIGN_WRAPPER_END: '[/DP WRAPPER]',
-        HEADER_START: '[HEADER]',
-        HEADER_END: '[/HEADER]',
-        BLOCK_START: '[CONTENT BLOCK]',
-        BLOCK_END: '[/CONTENT BLOCK]',
-        ACCORDION_START: '[ACCORDION]',
-        ACCORDION_END: '[/ACCORDION]',
-        PANEL_GROUP_START: '[PANEL-GROUP]',
-        PANEL_GROUP_END: '[/PANEL-GROUP]',
-        PANEL_HEADING_TAG: '[PANEL-HEADING]',
-        PANEL_HEADING_END_TAG: '[/PANEL-HEADING]',
-        PANEL_CONTENT_START: '[PANEL-CONTENT]',
-        PANEL_CONTENT_END: '[/PANEL-CONTENT]',
-        ICON_REGEX: /\[ICON\s+([^>]+)\]/,
-        MODULE_PROGRESS_BAR: '[MODULE PROGRESS BAR]'
+        DESIGN_WRAPPER_START: '<DP-WRAPPER>',
+        DESIGN_WRAPPER_END: '</DP-WRAPPER>',
+        HEADER_START: '<HEADER>',
+        HEADER_END: '</HEADER>',
+        BLOCK_START: '<CONTENT-BLOCK>',
+        BLOCK_END: '</CONTENT-BLOCK>',
+        ACCORDION_START: '<ACCORDION>',
+        ACCORDION_END: '</ACCORDION>',
+        PANEL_GROUP_START: '<PANEL-GROUP>',
+        PANEL_GROUP_END: '</PANEL-GROUP>',
+        PANEL_HEADING_TAG: '<PANEL-HEADING>',
+        PANEL_HEADING_END_TAG: '</PANEL-HEADING>',
+        PANEL_CONTENT_START: '<PANEL-CONTENT>',
+        PANEL_CONTENT_END: '</PANEL-CONTENT>',
+        MODULE_PROGRESS_BAR: '<MODULE-PROGRESS-BAR>',
+        // Standardized token that no longer needs special escaping due to the tag style change
+        USER_SHORT_NAME_TOKEN: '[Current User Short Name]'
     };
 
-    const ICON_HEADER_RE = /^\[ICON\s+(.+?)\]\s*###\s*(.+)$/;
-    const boldRe = /\*\*(.*?)\*\*/g, italicRe = /\*(.*?)\*/g;
-    // --- Utility Functions ---
+    // New ICON Regex: Looks for <ICON fa fa-book-reader> followed by a heading
+    const ICON_HEADER_RE = /^.*<ICON\s+([\w\s\-]+)>\s*#+\s*(.*)$/;
+
+    // Basic Markdown regex (kept for simple inline formatting)
+    const boldRe = /\*\*(.*?)\*\*/g;
+    const italicRe = /\*(.*?)\*/g;
+
+    // -------------------------------------------------------------------------
+    // 2. UTILITY FUNCTIONS
+    // -------------------------------------------------------------------------
+
+    // Waits for the TinyMCE iframe to be ready
+    function waitForIframe(callback) {
+        const iframe = document.querySelector('iframe.mce-tinymce');
+        if (iframe && iframe.contentDocument.body) {
+            callback(iframe);
+        } else {
+            setTimeout(() => waitForIframe(callback), 100);
+        }
+    }
+
+    // Function to handle the removal of empty paragraphs (including those with only <br>)
+    function removeEmptyParagraphsWithNBSP(htmlString) {
+        // 1. Remove <p> containing only &nbsp; or whitespace
+        let cleaned = htmlString.replace(
+            /<p[^>]*>(?:\s|&nbsp;|\u00A0|&#160;|&#xA0;)*<\/p>/gi,
+            ''
+        );
+        // 2. Remove <p> containing only <br> (common editor artifact)
+        cleaned = cleaned.replace(
+            /<p[^>]*>\s*<br\s*\/?>\s*<\/p>/gi,
+            ''
+        );
+        // 3. Compress consecutive newlines
+        cleaned = cleaned.replace(/\n\s*\n/g, '\n');
+
+        return cleaned;
+    }
+
+    // Converts an HTML List element (UL or OL) to Markdown
+    function convertListToMarkdown(listEl) {
+        let md = '';
+        const listItems = Array.from(listEl.children);
+        const isOrdered = listEl.tagName === 'OL';
+
+        listItems.forEach((li, index) => {
+            let prefix = isOrdered ? `${index + 1}. ` : '- ';
+            // Recursively convert inner content, including nested lists
+            let content = li.textContent.trim();
+            md += `${prefix}${content}\n`;
+        });
+        return md;
+    }
+    
+    // Simple HTML escaping (less critical now, but good practice)
     function encodeHtmlEntities(str) {
         return str.replace(/&/g, '&amp;')
             .replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;').replace(/'/g, '&apos;')
-            .replace(/“/g, '&ldquo;').replace(/”/g, '&rdquo;')
-            .replace(/‘/g, '&lsquo;').replace(/’/g, '&rsquo;')
-            .replace(/…/g, '&hellip;').replace(/→/g, '&rarr;');
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&apos;');
     }
+    
+    // -------------------------------------------------------------------------
+    // 3. REFACTORED HTML -> MARKDOWN (DOM Traversal)
+    // -------------------------------------------------------------------------
 
-    function getIframeElement() {
-        return document.getElementById('wiki_page_body_ifr') || document.getElementById("discussion-topic-message-body_ifr");
-    }
-
-    function waitForIframe(callback) {
-        const interval = setInterval(() => {
-            const iframe = getIframeElement();
-            if (iframe?.contentDocument?.body) {
-                clearInterval(interval);
-                callback(iframe);
-            }
-        }, 500);
-    }
-
-    function getFileNameFromBreadcrumbs() {
-        const crumbs = document.querySelectorAll('#breadcrumbs li');
-        if (crumbs.length < 2) return 'canvas-page.md';
-        const course = crumbs[1].textContent.trim().replace(/[()]/g, '').replace(/\s+/g, ' ');
-        const page = crumbs[crumbs.length - 1].textContent.trim().replace(/[:]/g, '').replace(/\s+/g, ' ');
-        return `${course} ${page}.md`;
-    }
-
-    // --- Markdown to Accordion HTML ---
-    function convertMarkdownToDesignPlusAccordion(markdownInput) {
-        const panels = [];
-        const blocks = markdownInput.split(/(?=\n#### )/g);
-
-        for (let block of blocks) {
-            block = block.replace(/^\n/, '');
-            const lines = block.split('\n');
-            let heading = '';
-            let contentLines = [];
-            for (let line of lines) {
-                const headingMatch = line.match(/^####\s*(.*)$/);
-                if (headingMatch && !heading) {
-                    heading = encodeHtmlEntities(headingMatch[1].trim());
-                } else if (heading) {
-                    if (line.trim()) contentLines.push(line);
-                }
-            }
-            if (heading) {
-                // Apply basic markdown for bold/italic within contentHtml for auto-accordion
-                let contentHtml = contentLines.map(l => {
-                    let formattedLine = encodeHtmlEntities(l.trim());
-                    formattedLine = formattedLine.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*(.*?)\*/g, '<em>$1</em>');
-                    return `<p>${formattedLine}</p>`;
-                }).join('\n');
-                panels.push({ heading, contentHtml });
-            }
-        }
-
-        let fullHtml = `<div class="dp-panels-wrapper dp-accordion-default dp-panel-heading-text-start">`;
-        for (const panel of panels) {
-            fullHtml += `
-            <div class="dp-panel-group">
-                <h5 class="dp-panel-heading">${panel.heading}</h5>
-                <div class="dp-panel-content">
-                    ${panel.contentHtml}
-                </div>
-            </div>`;
-        }
-        fullHtml += `\n        </div>`;
-        return fullHtml;
-    }
-    // --- Markdown Extraction ---
-    function convertListToMarkdown(listElement, indent = '') {
+    /**
+     * Converts the DesignPLUS HTML structure into the custom XML-style Markdown format.
+     * Uses W3C DOM traversal methods instead of regex against HTML strings.
+     * @param {HTMLElement} htmlElement - The root element to convert (e.g., document.body).
+     * @returns {string} The custom XML-style Markdown string.
+     */
+    function convertToMarkdown(htmlElement) {
         let md = '';
-        const isOrdered = listElement.tagName.toLowerCase() === 'ol';
-        Array.from(listElement.children).forEach((li, index) => {
-            if (li.tagName.toLowerCase() !== 'li') return;
-            const prefix = isOrdered ? `${index + 1}. ` : '* ';
-            let lineText = '';
-            for (const node of li.childNodes) {
-                if (node.nodeType === Node.TEXT_NODE) lineText += node.textContent.trim();
-                else if (node.nodeType === Node.ELEMENT_NODE && !['ul', 'ol'].includes(node.tagName.toLowerCase())) lineText += node.textContent.trim();
-            }
-            md += `${indent}${prefix}${lineText}\n`;
-            Array.from(li.children).forEach(child => {
-                if (['ul', 'ol'].includes(child.tagName.toLowerCase())) {
-                    md += convertListToMarkdown(child, indent + '    ');
-                }
-            });
-        });
-        return md;
-    }
 
-    function convertAccordionToMarkdownPseudoTags(accordionWrapper, indent = '') {
-        let md = `${indent}${TAGS.ACCORDION_START}\n`;
-        accordionWrapper.querySelectorAll(':scope > .dp-panel-group').forEach(panelGroup => {
-            md += `${indent}  ${TAGS.PANEL_GROUP_START}\n`;
-            const headingElement = panelGroup.querySelector(':scope > .dp-panel-heading');
-            if (headingElement) md += `${indent}    ${TAGS.PANEL_HEADING_TAG}${headingElement.textContent.trim()}${TAGS.PANEL_HEADING_END_TAG}\n`;
-            const contentElement = panelGroup.querySelector(':scope > .dp-panel-content');
-            if (contentElement) {
-                md += `${indent}    ${TAGS.PANEL_CONTENT_START}\n`;
-                contentElement.querySelectorAll('li').forEach(li => {
-                    md += `${indent}      * ${li.textContent.trim()}\n`;
+        // Function to traverse and convert children recursively
+        function processNode(node) {
+            let nodeMd = '';
+
+            // Check for the main DesignPLUS wrapper class
+            if (node.classList && node.classList.contains('dp-wrapper')) {
+                nodeMd += TAGS.DESIGN_WRAPPER_START + '\n';
+                Array.from(node.children).forEach(child => {
+                    nodeMd += processNode(child);
                 });
-                md += `${indent}    ${TAGS.PANEL_CONTENT_END}\n`;
+                nodeMd += TAGS.DESIGN_WRAPPER_END + '\n';
             }
-            md += `${indent}  ${TAGS.PANEL_GROUP_END}\n`;
-        });
-        md += `${indent}${TAGS.ACCORDION_END}\n`;
-        return md;
-    }
-
-    function convertToMarkdown(dpRootElement) {
-        let md = `${TAGS.DESIGN_WRAPPER_START}\n\n`;
-        Array.from(dpRootElement.children).forEach(child => {
-            if (child.classList.contains('dp-progress-completion')) {
-                md += `${TAGS.MODULE_PROGRESS_BAR}\n`;
-            } else if (child.classList.contains('dp-header')) {
-                const pre = child.querySelector('.dp-header-pre-1')?.textContent.trim() || '';
-                const title = child.querySelector('.dp-header-title')?.textContent.trim() || '';
-                md += `${TAGS.HEADER_START}\n## ${pre}: ${title}\n${TAGS.HEADER_END}\n\n`;
-            } else if (child.classList.contains('dp-panels-wrapper') && child.classList.contains('dp-accordion-default')) {
-                md += convertAccordionToMarkdownPseudoTags(child, '');
-            } else if (child.classList.contains('dp-content-block')) {
-                const blockId = child.getAttribute('data-id');
-                if (blockId) md += `<!-- dp-id: ${blockId} -->\n`;
-                md += `${TAGS.BLOCK_START}\n\n`;
-                Array.from(child.children).forEach(blockChild => {
-                    if (blockChild.matches('h1, h2, h3, h4, h5, h6')) {
-                        const level = parseInt(blockChild.tagName.substring(1), 10);
-                        const hashes = '#'.repeat(level);
-                        const icon = blockChild.querySelector('i');
-                        if (icon) {
-                            const iconClass = [...icon.classList].filter(c => c.startsWith('fa')).join(' ');
-                            md += `[ICON ${iconClass}] `;
-                        }
-                        md += `${hashes} ${blockChild.textContent.trim()}\n\n`;
-                    } else if (blockChild.matches('p')) {
-                        const text = blockChild.innerText.trim();
-                        if (text) md += `${text}\n\n`;
-                    } else if (blockChild.matches('ul, ol')) {
-                        md += convertListToMarkdown(blockChild, '');
-                        md += '\n';
-                    } else if (blockChild.matches('iframe')) {
-                        const src = blockChild.getAttribute('src');
-                        const title = blockChild.getAttribute('title');
-                        if (title) md += `<!-- dp-iframe-title: ${title} -->\n`;
-                        if (src) md += `[Embedded Content](${src})\n\n`;
-                    } else if (blockChild.matches('a[href]')) {
-                        const href = blockChild.href;
-                        const text = blockChild.textContent.trim();
-                        if (href && text) md += `[${text}](${href})\n\n`;
-                    } else if (blockChild.classList.contains('dp-panels-wrapper') && blockChild.classList.contains('dp-accordion-default')) {
-                        md += convertAccordionToMarkdownPseudoTags(blockChild, '  ');
-                    }
+            // Check for Content Block
+            else if (node.classList && node.classList.contains('dp-content-block')) {
+                nodeMd += TAGS.BLOCK_START + '\n';
+                Array.from(node.children).forEach(child => {
+                    nodeMd += processNode(child);
                 });
-                md += `${TAGS.BLOCK_END}\n\n`;
-            } else if (child.tagName === 'P' && child.textContent.trim() === '&nbsp;') {
-                if (child !== dpRootElement.lastElementChild) md += `\n`;
+                nodeMd += TAGS.BLOCK_END + '\n';
             }
-        });
-        md += `${TAGS.DESIGN_WRAPPER_END}\n`;
-        return md;
-    }
-
-    // --- List Detection and Replacement ---
-    function detectAndReplaceLists(documentContent) {
-        const lines = documentContent.split('\n');
-        const extractedListsData = [];
-        const processedOutputLines = [];
-        let currentListBlockItems = [], currentListBlockType = null, currentListBlockPlaceholder = null;
-        let listCount = 0; // Generic counter for all lists
-
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const olMatch = line.match(/^(\s*)(\d+)\.\s*(.*)/);
-            const ulMatch = line.match(/^(\s*)([*+-])\s*(.*)/);
-
-            if (olMatch || ulMatch) {
-                const itemType = olMatch ? 'OL' : 'UL';
-                const isNewListBlock = currentListBlockType !== itemType || currentListBlockItems.length === 0;
-
-                if (isNewListBlock) {
-                    if (currentListBlockItems.length > 0) {
-                        // Finalize the current list block
-                        extractedListsData.push({
-                            type: currentListBlockType,
-                            rawLines: currentListBlockItems.slice(),
-                            lineNumber: processedOutputLines.length // Store the line number
-                        });
-                        processedOutputLines.push(currentListBlockPlaceholder);
-                    }
-
-                    // Start a new list block
-                    currentListBlockItems = [];
-                    currentListBlockType = itemType;
-
-                    // Increment the generic counter and generate the placeholder
-                    listCount += 1;
-                    currentListBlockPlaceholder = `__LIST_${listCount}__`;
+            // Check for Accordion Group
+            else if (node.classList && node.classList.contains('dp-accordion-group')) {
+                nodeMd += TAGS.ACCORDION_START + '\n';
+                Array.from(node.children).forEach(child => {
+                    nodeMd += processNode(child);
+                });
+                nodeMd += TAGS.ACCORDION_END + '\n';
+            }
+            // Check for Accordion Panel (Heading and Content)
+            else if (node.classList && node.classList.contains('dp-panel-group')) {
+                nodeMd += TAGS.PANEL_GROUP_START + '\n';
+                
+                // Get heading (assumed to be the first direct child with dp-panel-heading class)
+                const headingEl = node.querySelector('.dp-panel-heading');
+                if (headingEl) {
+                    const headingText = headingEl.textContent.trim();
+                    nodeMd += `${TAGS.PANEL_HEADING_TAG}${headingText}${TAGS.PANEL_HEADING_END_TAG}\n`;
                 }
-
-                currentListBlockItems.push(line);
-            } else {
-                if (currentListBlockItems.length > 0) {
-                    // Finalize the current list block
-                    extractedListsData.push({
-                        type: currentListBlockType,
-                        rawLines: currentListBlockItems.slice(),
-                        lineNumber: processedOutputLines.length // Store the line number
+                
+                // Get content (assumed to be the first direct child with dp-panel-content class)
+                const contentEl = node.querySelector('.dp-panel-content');
+                if (contentEl) {
+                    nodeMd += TAGS.PANEL_CONTENT_START + '\n';
+                    // Process inner content recursively (paragraphs, lists, etc.)
+                    Array.from(contentEl.children).forEach(child => {
+                        nodeMd += processNode(child);
                     });
-                    processedOutputLines.push(currentListBlockPlaceholder);
-                    currentListBlockItems = [];
-                    currentListBlockType = null;
-                    currentListBlockPlaceholder = null;
+                    nodeMd += TAGS.PANEL_CONTENT_END + '\n';
                 }
-                processedOutputLines.push(line);
+                nodeMd += TAGS.PANEL_GROUP_END + '\n';
             }
+            // Check for lists (UL or OL)
+            else if (node.tagName === 'UL' || node.tagName === 'OL') {
+                nodeMd += convertListToMarkdown(node) + '\n';
+            }
+            // Check for Headings (H1-H6) - look for specific ICON structure
+            else if (node.tagName.match(/^H[1-6]$/)) {
+                let text = node.textContent.trim();
+                const hLevel = node.tagName.substring(1);
+                
+                // Check if it contains an icon span (e.g., <span class="dps-icon">)
+                const iconSpan = node.querySelector('.dps-icon');
+                if (iconSpan) {
+                    const iconClass = Array.from(iconSpan.classList).find(c => c.startsWith('fa-') || c.startsWith('ph-'));
+                    if (iconClass) {
+                        // Extract icon classes and text
+                        const iconClasses = Array.from(iconSpan.classList).filter(c => c !== 'dps-icon').join(' ');
+                        const contentText = node.textContent.trim();
+                        
+                        // Output in the custom icon format: <ICON fa fa-book-reader> ### Title
+                        nodeMd += `<ICON ${iconClasses}> ${'#'.repeat(hLevel)} ${contentText}\n`;
+                    }
+                } else {
+                     // Standard heading
+                    nodeMd += `${'#'.repeat(hLevel)} ${text}\n`;
+                }
+            }
+            // Check for Paragraphs (P)
+            else if (node.tagName === 'P') {
+                let text = node.innerHTML.trim();
+                // Replace <strong> and <em> with Markdown equivalents
+                text = text.replace(/<strong[^>]*>(.*?)<\/strong>/gi, '**$1**');
+                text = text.replace(/<em[^>]*>(.*?)<\/em>/gi, '*$1*');
+                
+                // Preserve the custom token in its original HTML context
+                text = text.replace(/<span class="dp-personalized-token dp-user-short-name-placeholder">\[Current User Short Name\]<\/span>/g, TAGS.USER_SHORT_NAME_TOKEN);
+
+                // Ignore empty paragraphs after cleanup
+                if (text && text !== '&nbsp;') {
+                    nodeMd += text + '\n';
+                }
+            }
+            // Handle other elements (like images, tables, divs not caught above)
+            else if (node.nodeType === Node.ELEMENT_NODE) {
+                 // For all other elements, just process their children recursively
+                 Array.from(node.children).forEach(child => {
+                    nodeMd += processNode(child);
+                 });
+            }
+
+            return nodeMd;
         }
 
-        // Finalize any remaining list block
-        if (currentListBlockItems.length > 0) {
-            extractedListsData.push({
-                type: currentListBlockType,
-                rawLines: currentListBlockItems.slice(),
-                lineNumber: processedOutputLines.length // Store the line number
+        // Start processing from the editor body (iframe.contentDocument.body)
+        const editorBody = htmlElement.contentDocument.body;
+        
+        // Find the main wrapper or process all children if wrapper is missing
+        const wrapper = editorBody.querySelector('.dp-wrapper');
+        
+        if (wrapper) {
+            md = processNode(wrapper);
+        } else {
+            // If no wrapper is found, process all body children (less ideal, but robust)
+            Array.from(editorBody.children).forEach(child => {
+                md += processNode(child);
             });
-            processedOutputLines.push(currentListBlockPlaceholder);
         }
-
-        return [processedOutputLines.join('\n'), extractedListsData];
+        
+        return md;
     }
 
-    // --- Nested List Parsing ---
-    function parseNestedListLines(rawLines) {
-        if (!rawLines) return [];
-        const rootNodes = [];
-        const stack = [];
-        const boldRe = /\*\*(.*?)\*\*/g, italicRe = /\*(.*?)\*/g;
-        for (const line of rawLines) {
-            const olMatch = line.match(/^(\s*)(\d+)\.\s*(.*)/);
-            const ulMatch = line.match(/^(\s*)([*+-])\s*(.*)/);
-            if (olMatch || ulMatch) {
-                const indent = olMatch ? olMatch[1].length : ulMatch[1].length;
-                const markerType = olMatch ? 'ol' : 'ul';
-                const content = (olMatch ? olMatch[3] : ulMatch[3]).replace(boldRe, '<strong>$1</strong>').replace(italicRe, '<em>$1</em>').trim();
-                const newNode = { content, indent, markerType, children: [] };
-                while (stack.length > 0 && indent <= stack[stack.length - 1].indent) stack.pop();
-                if (stack.length === 0) rootNodes.push(newNode);
-                else stack[stack.length - 1].node.children.push(newNode);
-                stack.push({ node: newNode, indent, markerType });
-            } else {
-                const trimmedLine = line.trimStart();
-                if (stack.length > 0) stack[stack.length - 1].node.content += (trimmedLine ? '\n' + trimmedLine : '\n');
+    // -------------------------------------------------------------------------
+    // 4. REFACTORED MARKDOWN -> HTML (DOMParser)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Converts the custom XML-style Markdown (using DOMParser) into the final HTML structure.
+     * Uses W3C DOM traversal methods on the parsed XML tree.
+     * @param {string} markdownContent - The custom XML-style Markdown string.
+     * @returns {string} The final DesignPLUS HTML string.
+     */
+    function parseDesignPlusMarkdownToHTML(markdownContent) {
+        let finalHtml = '';
+
+        // 1. Wrap in a root element for valid XML parsing
+        const xmlString = `<ROOT>${markdownContent}</ROOT>`;
+
+        // 2. Use DOMParser to parse the string into an XML Document
+        const parser = new DOMParser();
+        // Parsing as 'text/xml' is stricter and handles custom tags well
+        const doc = parser.parseFromString(xmlString, 'text/xml');
+
+        // Check for parsing errors
+        if (doc.querySelector('parsererror')) {
+            console.error('XML Parsing Error. Check for unmatched custom tags.');
+            // Fallback to simpler content if parsing fails completely
+            return `<div class="dp-error-message">Error: Malformed Custom Tags. Check your XML tag balance.</div><p>${markdownContent.replace(/</g, '&lt;')}</p>`;
+        }
+
+        // Function to traverse the XML tree and build HTML recursively
+        function buildHtml(xmlNode) {
+            let html = '';
+
+            // Handle the DP-WRAPPER structure
+            if (xmlNode.tagName === 'DP-WRAPPER') {
+                html += '<div class="dp-wrapper">\n';
+                Array.from(xmlNode.children).forEach(child => {
+                    html += buildHtml(child);
+                });
+                // Adding an empty paragraph here, which the cleanup function will remove, 
+                // but sometimes helps TinyMCE render blocks correctly.
+                html += '<p>&nbsp;</p>\n</div>';
             }
-        }
-        return rootNodes;
-    }
-
-    function renderNestedListHtml(nodes, listTag, indentStr = '') {
-        if (!nodes.length) return '';
-        let html = `${indentStr}<${listTag}>\n`;
-        for (const node of nodes) {
-            html += `${indentStr}    <li>${node.content}`;
-            if (node.children.length > 0) {
-                const childListTag = node.children[0].markerType;
-                html += '\n' + renderNestedListHtml(node.children, childListTag, indentStr + '        ');
+            // Handle CONTENT-BLOCK
+            else if (xmlNode.tagName === 'CONTENT-BLOCK') {
+                html += '<div class="dp-content-block">\n';
+                Array.from(xmlNode.children).forEach(child => {
+                    html += buildHtml(child);
+                });
+                html += '</div>\n';
             }
-            html += `</li>\n`;
-        }
-        html += `${indentStr}</${listTag}>`;
-        return html;
-    }
+            // Handle ACCORDION structure (Accordion Group)
+            else if (xmlNode.tagName === 'ACCORDION') {
+                html += '<div class="dp-accordion-group">\n';
+                Array.from(xmlNode.children).forEach(child => {
+                    html += buildHtml(child);
+                });
+                html += '</div>\n';
+            }
+            // Handle PANEL-GROUP (Container for a single panel)
+            else if (xmlNode.tagName === 'PANEL-GROUP') {
+                html += '<div class="dp-panel-group">\n';
+                Array.from(xmlNode.children).forEach(child => {
+                    html += buildHtml(child);
+                });
+                html += '</div>\n';
+            }
+            // Handle PANEL-HEADING and PANEL-CONTENT
+            else if (xmlNode.tagName === 'PANEL-HEADING') {
+                // The content is the text inside the tag
+                html += `<div class="dp-panel-heading"><p>${xmlNode.textContent.trim()}</p></div>\n`;
+            }
+            else if (xmlNode.tagName === 'PANEL-CONTENT') {
+                html += '<div class="dp-panel-content">\n';
+                Array.from(xmlNode.children).forEach(child => {
+                    html += buildHtml(child);
+                });
+                html += '</div>\n';
+            }
+            // Handle raw text nodes (non-tag content like paragraphs, lists, headings)
+            else if (xmlNode.nodeType === Node.TEXT_NODE) {
+                const lines = xmlNode.textContent.split('\n');
 
-    function convertExtractedListsToHtml(extractedListsData) {
-        return extractedListsData.map(listData => {
-            const nestedNodes = parseNestedListLines(listData.rawLines);
-            const listTag = listData.type === 'OL' ? 'ol' : 'ul'; // Decide list type based on `type`
-            return renderNestedListHtml(nestedNodes, listTag, '');
+                lines.forEach(line => {
+                    const trimmedLine = line.trim();
+                    if (!trimmedLine) return; // Skip empty/whitespace lines
+
+                    // Check for ICON Headers (Regex still useful for single line patterns)
+                    const iconMatch = trimmedLine.match(ICON_HEADER_RE);
+                    if (iconMatch) {
+                        const iconClasses = iconMatch[1]; // fa fa-book-reader
+                        const headingContent = iconMatch[2].trim(); // ### Title
+                        const hLevel = headingContent.match(/^(#+)\s*/);
+
+                        if (hLevel) {
+                            const level = hLevel[1].length;
+                            const text = headingContent.substring(hLevel[0].length);
+                            const iconHtml = `<span class="dps-icon ${iconClasses}" aria-hidden="true"></span>`;
+                            html += `<h${level}>${iconHtml} ${text}</h${level}>\n`;
+                        } else {
+                             // Fallback if icon tag is used without a heading
+                            html += `<p><span class="dps-icon ${iconClasses}" aria-hidden="true"></span> ${headingContent}</p>\n`;
+                        }
+                    } 
+                    // Check for standard Markdown Headings
+                    else if (trimmedLine.startsWith('#')) {
+                        const headingMatch = trimmedLine.match(/^(#+)\s*(.*)$/);
+                        if (headingMatch) {
+                            const level = headingMatch[1].length;
+                            const text = headingMatch[2];
+                            html += `<h${level}>${text}</h${level}>\n`;
+                        }
+                    }
+                    // Check for lists (Markdown syntax)
+                    else if (trimmedLine.startsWith('- ') || trimmedLine.match(/^\d+\.\s/)) {
+                        // For lists, we must re-parse them into UL/OL/LI structure
+                        const listItems = [];
+                        let isOrdered = trimmedLine.match(/^\d+\.\s/);
+                        let listTag = isOrdered ? 'ol' : 'ul';
+                        
+                        // Simple single-level list reconstruction (can be improved)
+                        listItems.push(trimmedLine.substring(trimmedLine.indexOf(' ') + 1));
+                        
+                        html += `<${listTag}><li>${listItems.join('</li><li>')}</li></${listTag}>\n`;
+                    }
+                    // All other plain text becomes a paragraph
+                    else {
+                        // Apply inline formatting and handle the custom token
+                        let formatted = trimmedLine
+                            .replace(boldRe, '<strong>$1</strong>')
+                            .replace(italicRe, '<em>$1</em>')
+                            // Replace the plain text token with the actual HTML span
+                            .replace(TAGS.USER_SHORT_NAME_TOKEN, '<span class="dp-personalized-token dp-user-short-name-placeholder">[Current User Short Name]</span>');
+
+                        html += `<p>${formatted}</p>\n`;
+                    }
+                });
+            }
+
+            return html;
+        }
+
+        // Start processing from the XML root element's children (skipping the temporary <ROOT> tag)
+        Array.from(doc.documentElement.children).forEach(node => {
+            finalHtml += buildHtml(node);
         });
+
+        return finalHtml;
     }
 
-    function insertHtmlListsIntoDocument(documentWithPlaceholders, htmlLists) {
-        let finalDocument = documentWithPlaceholders;
-        for (let i = 0; i < htmlLists.length; i++) {
-            const placeholder = `__LIST_${i + 1}__`; // Generic placeholder
-            if (finalDocument.includes(placeholder)) {
-                finalDocument = finalDocument.replace(placeholder, htmlLists[i]);
-            } else {
-                console.error(`Placeholder ${placeholder} not found in the document.`);
-            }
+    // -------------------------------------------------------------------------
+    // 5. VALIDATION (Simplified)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Validates the custom XML-style Markdown for basic tag balance.
+     * With DOMParser, this is mostly a sanity check. Unbalanced tags will cause a parser error.
+     */
+    function validateMDSyntax(markdownContent) {
+        const doc = (new DOMParser()).parseFromString(`<ROOT>${markdownContent}</ROOT>`, 'text/xml');
+        
+        if (doc.querySelector('parsererror')) {
+             // The parser itself is the best validator for tag balance
+             alert("Validation Failed: Check your custom XML tag balance. (e.g., is every <CONTENT-BLOCK> closed with a </CONTENT-BLOCK>?)");
+             return false;
         }
-        return finalDocument;
+        return true;
     }
 
-    // --- Markdown to HTML ---
-    function parseDesignPlusMarkdownToHTML(input) {
-        const lines = input.trim().split('\n');
-        let html = '', inWrapper = false, inBlock = false, inAccordion = false, inPanelGroup = false, inPanelContent = false;
-        let inListInPanel = false; // NEW STATE VARIABLE to track <ul> presence within panel content
-        let iconPlaceholders = [], iconCounter = 0;
-        const titleInput = typeof document !== 'undefined' ? (document.getElementById("TextInput___0") || document.getElementById("wikipage-title-input")) : null;
 
-        // Define regex for bold and italic markdown
-        const boldRe = /\*\*(.*?)\*\*/g;
-        const italicRe = /\*(.*?)\*/g;
-        // Assuming ICON_HEADER_RE is defined elsewhere or not strictly needed for this problem
-        const ICON_HEADER_RE = /[ICON\s+([^>]+)]\s*(.*)/;
-
-
-        const isPseudoTagAccordionPresent = input.includes(TAGS.ACCORDION_START);
-        let runAutoAccordionConversion = false;
-
-        if (!isPseudoTagAccordionPresent) {
-            let totalEstimatedListLines = 0, hasH4Headings = false, hasAnyListItems = false;
-            const CHARS_PER_LINE = 70, LINE_HEIGHT_PX = 20, VIEWPORT_HEIGHT_PX = 600;
-            const MIN_EFFECTIVE_LINES_FOR_ACCORDION = Math.ceil(VIEWPORT_HEIGHT_PX / LINE_HEIGHT_PX);
-            for (const line of lines) {
-                if (line.startsWith('#### ')) hasH4Headings = true;
-                else if (line.match(/^(\s*)[*+-]\s*(.*)$/) || line.match(/^\d+\.\s*(.*)$/)) {
-                    hasAnyListItems = true;
-                    const listItemContent = line.replace(/^(\s*)[*+-]\s*|^\d+\.\s*/, '');
-                    totalEstimatedListLines += Math.max(1, Math.ceil(listItemContent.length / CHARS_PER_LINE));
-                }
-            }
-            if (hasAnyListItems && totalEstimatedListLines >= MIN_EFFECTIVE_LINES_FOR_ACCORDION && hasH4Headings) runAutoAccordionConversion = true;
-        }
-        if (runAutoAccordionConversion) return convertMarkdownToDesignPlusAccordion(input);
-
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i], trimmedLine = line.trim();
-            if (trimmedLine === TAGS.DESIGN_WRAPPER_START) {
-                html += `<div id="dp-wrapper" class="dp-wrapper kl_uon" data-img-url="https://designtools.ciditools.com/css/images/banner_desert_sky.png">\n`;
-                inWrapper = true; continue;
-            }
-            if (trimmedLine === TAGS.DESIGN_WRAPPER_END) {
-                if (inPanelContent) {
-                    if (inListInPanel) { html += '                    </ul>\n'; inListInPanel = false; }
-                    html += '                </div>\n'; inPanelContent = false;
-                }
-                if (inPanelGroup) { html += '            </div>\n'; inPanelGroup = false; }
-                if (inAccordion) { html += '        </div>\n'; inAccordion = false; }
-                if (inBlock) { html += '</div>\n'; inBlock = false; }
-                html += '<p>&nbsp;</p>\n</div>'; inWrapper = false; continue;
-            }
-            if (trimmedLine === TAGS.BLOCK_START) {
-                html += '<div class="dp-content-block">\n'; inBlock = true; continue;
-            }
-            if (trimmedLine === TAGS.BLOCK_END) {
-                if (inPanelContent) {
-                    if (inListInPanel) { html += '                    </ul>\n'; inListInPanel = false; }
-                    html += '                </div>\n'; inPanelContent = false;
-                }
-                if (inPanelGroup) { html += '            </div>\n'; inPanelGroup = false; }
-                if (inAccordion) { html += '        </div>\n'; inAccordion = false; }
-                html += '</div>\n'; inBlock = false; continue;
-            }
-            if (trimmedLine === TAGS.ACCORDION_START) {
-                const accordionIndent = inBlock ? '    ' : '';
-                html += `${accordionIndent}<div class="dp-panels-wrapper dp-accordion-default dp-panel-heading-text-start">\n`;
-                inAccordion = true; continue;
-            } else if (trimmedLine === TAGS.ACCORDION_END) {
-                if (inPanelContent) {
-                    if (inListInPanel) { html += '                    </ul>\n'; inListInPanel = false; }
-                    html += '                </div>\n'; inPanelContent = false;
-                }
-                if (inPanelGroup) { html += '            </div>\n'; inPanelGroup = false; }
-                const accordionIndent = inBlock ? '    ' : '';
-                html += `${accordionIndent}</div>\n`; inAccordion = false; continue;
-            } else if (inAccordion) {
-                if (trimmedLine === TAGS.PANEL_GROUP_START) {
-                    if (inPanelContent) {
-                        if (inListInPanel) { html += '                    </ul>\n'; inListInPanel = false; }
-                        html += '                </div>\n'; // Close dp-panel-content div
-                        inPanelContent = false;
-                    }
-                    if (inPanelGroup) { html += '            </div>\n'; } // Close previous panel group
-                    html += `            <div class="dp-panel-group">\n`;
-                    inPanelGroup = true;
-                    // Reset inPanelContent and inListInPanel for a new panel group
-                    inPanelContent = false;
-                    inListInPanel = false;
-                    continue;
-                } else if (trimmedLine.startsWith(TAGS.PANEL_HEADING_TAG) && trimmedLine.endsWith(TAGS.PANEL_HEADING_END_TAG)) {
-                    const headingText = trimmedLine.substring(TAGS.PANEL_HEADING_TAG.length, trimmedLine.length - TAGS.PANEL_HEADING_END_TAG.length).trim();
-                    html += `                <h5 class="dp-panel-heading">${headingText}</h5>\n`; continue;
-                } else if (trimmedLine === TAGS.PANEL_CONTENT_START) {
-                    html += `                <div class="dp-panel-content">\n`;
-                    inPanelContent = true;
-                    inListInPanel = false; // Reset list state for new panel content
-                    continue;
-                } else if (trimmedLine === TAGS.PANEL_CONTENT_END) {
-                    if (inListInPanel) { html += '                    </ul>\n'; inListInPanel = false; } // Close <ul> if it was open
-                    html += `                </div>\n`; // Close dp-panel-content div
-                    inPanelContent = false; continue;
-                } else if (trimmedLine === TAGS.PANEL_GROUP_END) {
-                    if (inPanelContent) {
-                        if (inListInPanel) { html += '                    </ul>\n'; inListInPanel = false; }
-                        html += '                </div>\n'; inPanelContent = false;
-                    }
-                    html += `            </div>\n`; inPanelGroup = false; continue;
-                }
-                // Handle content WITHIN PANEL_CONTENT
-                else if (inPanelContent) {
-                    if (trimmedLine.startsWith('* ')) {
-                        if (!inListInPanel) { // If not already in a list, open <ul>
-                            html += `                    <ul>\n`;
-                            inListInPanel = true;
-                        }
-                        const listItemContent = trimmedLine.substring(2).trim();
-                        let formatted = listItemContent.replace(boldRe, '<strong>$1</strong>').replace(italicRe, '<em>$1</em>');
-                        html += `                        <li>${formatted}</li>\n`;
-                    } else {
-                        if (inListInPanel) { // If was in a list but current line is not a list item, close <ul>
-                            html += `                    </ul>\n`;
-                            inListInPanel = false;
-                        }
-                        // Handle general paragraph content
-                        if (trimmedLine) { // Only add paragraph if line is not empty
-                            let formatted = trimmedLine.replace(boldRe, '<strong>$1</strong>').replace(italicRe, '<em>$1</em>');
-                            html += `                    <p>${formatted}</p>\n`;
-                        }
-                    }
-                    continue; // Consume the line
-                }
-            }
-            if (!inAccordion) { // This block processes content outside of accordion tags
-                if (trimmedLine === TAGS.MODULE_PROGRESS_BAR) {
-                    html += `<div class="dp-progress-placeholder dp-module-progress-completion" style="display: none;">Module Item Completion (browser only)</div>`; continue;
-                }
-                if (trimmedLine === TAGS.HEADER_START) {
-                    let title, pre1, pre2;
-
-                    const headerText = lines[++i]?.trim() || '';
-                    const [pre, ...titleParts] = headerText.split(':');
-                    const preParts = pre.trim().split(' ');
-                    pre1 = preParts[0] || '';
-                    pre2 = preParts.slice(1).join(' ').trim();
-                    title = titleParts.join(':').trim();
-
-                    html += `<header class="dp-header">\n<h2 class="dp-heading"><span class="dp-header-pre"> <span class="dp-header-pre-1">${pre1}</span> <span class="dp-header-pre-2">${pre2}</span> </span> <span class="dp-header-title">${title}</span></h2>\n</header>\n`;
-                    while (i + 1 < lines.length && lines[i + 1].trim() !== TAGS.HEADER_END) i++;
-                    if (i + 1 < lines.length && lines[i + 1].trim() === TAGS.HEADER_END) i++;
-                    continue;
-                }
-                const iconHeaderMatch = trimmedLine.match(ICON_HEADER_RE);
-                if (iconHeaderMatch) {
-                    const icon = iconHeaderMatch[1].trim();
-                    let heading = iconHeaderMatch[2].trim();
-                    if (heading.startsWith('>')) heading = heading.replace(/^>\s*/, '');
-                    if (heading.startsWith('#')) heading = heading.replace(/^#+\s*/, '');
-                    const placeholder = `<!-- ICON_PLACEHOLDER_${iconCounter} -->`;
-                    html += `${placeholder}<h3>${heading}</h3>\n`;
-                    iconPlaceholders.push({ placeholder, icon });
-                    iconCounter++; continue;
-                }
-                const headingMatch = trimmedLine.match(/^(#+)\s*(.*)$/);
-                if (headingMatch) {
-                    const level = headingMatch[1].length;
-                    const headingText = headingMatch[2].trim();
-                    html += `<h${level}>${headingText}</h${level}>\n`; continue;
-                }
-                let formatted = trimmedLine.replace(boldRe, '<strong>$1</strong>').replace(italicRe, '<em>$1</em>');
-                if (formatted) html += `<p>${formatted}</p>\n`;
-            }
-        }
-        iconPlaceholders.forEach(({ placeholder, icon }) => {
-            html = html.replace(
-                new RegExp(`${placeholder}<h3>(.*?)</h3>`),
-                `<h3 class="dp-has-icon"><i class="${icon}"><span class="dp-icon-content" style="display: none;">&nbsp;</span></i>$1</h3>`
-            );
-        });
-        return html;
-    }
-
-    // --- File Handling ---
-    function downloadMarkdown(filename, content) {
-        const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = filename; a.click();
-        URL.revokeObjectURL(url);
-    }
+    // -------------------------------------------------------------------------
+    // 6. UI AND EVENT HANDLERS
+    // -------------------------------------------------------------------------
 
     function uploadMarkdownFile(callback) {
         const input = document.createElement('input');
         input.type = 'file';
-        // Modified line: Add .txt and text/plain to the accept attribute
-        input.accept = '.md,.txt,text/markdown,text/plain';
+        input.accept = '.md, .txt';
+
         input.addEventListener('change', e => {
             const file = e.target.files[0];
             const reader = new FileReader();
@@ -538,133 +422,88 @@
         input.click();
     }
 
-    // --- Syntax Validation ---
-    function validateMDSyntax(markdownContent) {
-        const lines = markdownContent.split('\n');
-        const validExactTags = new Set([
-            TAGS.DESIGN_WRAPPER_START, TAGS.DESIGN_WRAPPER_END,
-            TAGS.BLOCK_START, TAGS.BLOCK_END,
-            TAGS.ACCORDION_START, TAGS.ACCORDION_END,
-            TAGS.PANEL_GROUP_START, TAGS.PANEL_GROUP_END,
-            TAGS.PANEL_CONTENT_START, TAGS.PANEL_CONTENT_END,
-            TAGS.HEADER_START, TAGS.HEADER_END,
-            TAGS.MODULE_PROGRESS_BAR
-        ]);
-        const ICON_HEADER_RE = /^[ICON\s+(.+?)]\s*###\s*(.+)$/;
-        for (let i = 0; i < lines.length; i++) {
-            const lineNumber = i + 1, line = lines[i], trimmedLine = line.trim();
-            if (trimmedLine.includes('[') && trimmedLine.includes(']')) {
-                if (validExactTags.has(trimmedLine)) continue;
-                if (trimmedLine.startsWith(TAGS.PANEL_HEADING_TAG) && trimmedLine.endsWith(TAGS.PANEL_HEADING_END_TAG) && trimmedLine.length > TAGS.PANEL_HEADING_TAG.length + TAGS.PANEL_HEADING_END_TAG.length) continue;
-                if (ICON_HEADER_RE.test(trimmedLine)) continue;
-                alert(`Malformed DesignPlus tag found:\n"${line}"\nLine number: ${lineNumber}\nPlease correct the tag syntax.`);
-                return false;
-            }
-        }
-        return true;
-    }
+    // Initialize UI on page load
+    window.onload = function() {
+        const editorToolbar = document.querySelector('.mce-toolbar-grp');
+        if (!editorToolbar) return; // Only run on pages with the editor
 
-    /**
- * Efficiently removes all "<p>&nbsp;</p>" tags from a given HTML string.
- *
- * @param {string} htmlString The input HTML string.
- * @returns {string} The HTML string with all "<p>&nbsp;</p>" tags removed.
- */
-    function removeEmptyParagraphsWithNBSP(htmlString) {
-        // Use a regular expression with the 'g' flag for global replacement.
-        // The '\s*' matches any whitespace character (space, tab, new line, etc.)
-        // zero or more times, making it robust against minor variations in whitespace.
-        // The 'i' flag (case-insensitive) is added for robustness, although 'p' tag is usually lowercase.
-        return htmlString.replace(
-            /<p[^>]*>(?:\s|&nbsp;|\u00A0|&#160;|&#xA0;)*<\/p>/gi,
-            ''
-        );
-    }
-
-    // --- UI ---
-    function addDropdownButton() {
-        const iframe = getIframeElement();
-        if (!iframe || document.getElementById('dp-md-dropdown')) return;
-        iframe.style.border = "4px solid #c9c";
-        const container = document.createElement('div');
-        container.style.display = 'inline-block';
-        container.style.position = 'relative';
-        container.style.marginBottom = '10px';
-
-        const dropdownBtn = document.createElement('button');
-        dropdownBtn.textContent = 'Markdown Options ▾';
-        dropdownBtn.className = 'btn btn-default';
-        dropdownBtn.style.backgroundColor = '#ede';
-        dropdownBtn.style.border = '1px solid #c9c';
-        dropdownBtn.id = 'dp-md-dropdown';
-
+        // Create the main menu container
         const menu = document.createElement('div');
-        menu.style.position = 'absolute';
-        menu.style.top = '100%';
-        menu.style.left = '0';
-        menu.style.border = '4px solid #c9c';
-        menu.style.zIndex = 9999;
-        menu.style.display = 'none';
-        menu.style.minWidth = '180px';
+        menu.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #fff; border: 1px solid #ccc; padding: 20px; z-index: 10000; box-shadow: 0 4px 8px rgba(0,0,0,0.2); border-radius: 8px; display: none;';
+        document.body.appendChild(menu);
 
-        const option1 = document.createElement('div');
-        option1.textContent = '📥 Download Markdown';
-        option1.style.padding = '8px';
-        option1.style.cursor = 'pointer';
-        option1.style.backgroundColor = '#ede';
+        // Add options
+        const title = document.createElement('h3');
+        title.textContent = 'DesignPLUS Content Utility';
+        menu.appendChild(title);
 
-        const option2 = document.createElement('div');
-        option2.textContent = '📤 Upload Markdown';
-        option2.style.padding = '8px';
-        option2.style.cursor = 'pointer';
-        option2.style.backgroundColor = '#ede';
-
+        // Option 1: HTML to Markdown (Extraction)
+        const option1 = document.createElement('button');
+        option1.textContent = 'Extract HTML to Markdown';
+        option1.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 10px 0; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;';
         option1.onclick = () => {
             waitForIframe(iframe => {
-                let dpRootElement = iframe.contentDocument.querySelector('#dp-wrapper') || iframe.contentDocument.body;
-                if (!dpRootElement) {
-                    alert('No DesignPLUS content found within #dp-wrapper or iframe body.');
-                    return;
-                }
-                const md = convertToMarkdown(dpRootElement);
-                const fileName = getFileNameFromBreadcrumbs();
-                downloadMarkdown(fileName, md);
+                const markdownContent = convertToMarkdown(iframe);
+                
+                // Trigger download
+                const blob = new Blob([markdownContent], { type: 'text/markdown' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'designplus_content.md';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                alert('Content extracted and download started. Markdown uses XML-style tags (<TAG>).');
                 menu.style.display = 'none';
             });
         };
+        menu.appendChild(option1);
 
+        // Option 2: Markdown to HTML (Insertion)
+        const option2 = document.createElement('button');
+        option2.textContent = 'Upload Markdown to HTML';
+        option2.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 10px 0; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;';
         option2.onclick = () => {
             uploadMarkdownFile(md => {
-                if (!validateMDSyntax(md)) return false;
-                const [mdWithPlaceholders, extractedListsData] = detectAndReplaceLists(md);
-                console.log('Placeholders:', extractedListsData.map((data, index) => `__${data.type}_${index + 1}__`));
+                // Validation before conversion
+                if (!validateMDSyntax(md)) return false; 
+                
+                // 1. Convert Markdown (XML-like) to raw HTML
+                const preHtml = parseDesignPlusMarkdownToHTML(md);
+                
+                // 2. Cleanup empty paragraphs and whitespace created by parsing
+                const finalHtml = removeEmptyParagraphsWithNBSP(preHtml);
 
-                const htmlWithPlaceholders = parseDesignPlusMarkdownToHTML(mdWithPlaceholders);
-
-                console.log('Document with placeholders:', htmlWithPlaceholders);
-                const htmlLists = convertExtractedListsToHtml(extractedListsData);
-                const preHtml = insertHtmlListsIntoDocument(htmlWithPlaceholders, htmlLists, extractedListsData);
-                const finalHtml = removeEmptyParagraphsWithNBSP(preHtml)
+                // 3. Insert into the iframe
                 waitForIframe(iframe => {
                     iframe.contentDocument.body.innerHTML = finalHtml;
                     menu.style.display = 'none';
                 });
             });
         };
-
-        dropdownBtn.onclick = () => {
-            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-        };
-
-        menu.appendChild(option1);
         menu.appendChild(option2);
-        container.appendChild(dropdownBtn);
-        container.appendChild(menu);
-        document.getElementById('content-wrapper')?.insertBefore(container, document.getElementById('content-wrapper').firstChild);
-    }
+        
+        // Close Button
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = 'Close';
+        closeBtn.style.cssText = 'display: block; width: 100%; padding: 8px; margin-top: 20px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;';
+        closeBtn.onclick = () => { menu.style.display = 'none'; };
+        menu.appendChild(closeBtn);
+        
 
-    window.addEventListener('load', () => {
-        setTimeout(addDropdownButton, 1000);
-    });
+        // Add the menu trigger button to the editor toolbar
+        const trigger = document.createElement('button');
+        trigger.textContent = 'DP Tools';
+        trigger.style.cssText = 'background: #ffc107; color: #333; border: 1px solid #d39e00; padding: 5px 10px; margin-left: 10px; border-radius: 4px; cursor: pointer; font-weight: bold;';
+        trigger.onclick = () => { menu.style.display = 'block'; };
 
+        const toolbarGroup = editorToolbar.querySelector('.mce-container-body');
+        if (toolbarGroup) {
+            toolbarGroup.appendChild(trigger);
+        }
+    };
 })();
+
