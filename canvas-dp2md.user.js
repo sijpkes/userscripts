@@ -433,7 +433,6 @@
     
     /**
      * Uses a MutationObserver to wait for the TinyMCE editor toolbar to be added to the DOM.
-     * This is a standard, non-polling way to detect dynamically loaded elements.
      */
     function observeEditorLoad() {
         // Find the most stable parent container to observe changes in, typically document.body
@@ -461,7 +460,8 @@
         // console.log("DP Tools: MutationObserver started, waiting for editor toolbar...");
     }
 
-    // Start initialization using the MutationObserver.
-    observeEditorLoad();
+    // Fix: Wait for the 'load' event to ensure document.body is fully available before 
+    // starting the MutationObserver, preventing the "parameter 1 is not of type 'Node'" error.
+    window.addEventListener('load', observeEditorLoad);
 
 })();
