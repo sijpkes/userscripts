@@ -30,7 +30,7 @@
         PANEL_HEADING_END_TAG: '[/PANEL-HEADING]',
         PANEL_CONTENT_START: '[PANEL-CONTENT]',
         PANEL_CONTENT_END: '[/PANEL-CONTENT]',
-        ICON_REGEX: /[ICON\s+([^>]+)]/,
+        ICON_REGEX: /\[ICON\s+([^>]+)\]/,
         MODULE_PROGRESS_BAR: '[MODULE PROGRESS BAR]'
     };
 
