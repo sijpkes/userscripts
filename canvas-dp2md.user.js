@@ -34,7 +34,7 @@
         MODULE_PROGRESS_BAR: '[MODULE PROGRESS BAR]'
     };
 
-    const ICON_HEADER_RE = /^[ICON\s+(.+?)]\s*###\s*(.+)$/;
+    const ICON_HEADER_RE = /^\[ICON\s+(.+?)\]\s*###\s*(.+)$/;
     const boldRe = /\*\*(.*?)\*\*/g, italicRe = /\*(.*?)\*/g;
     // --- Utility Functions ---
     function encodeHtmlEntities(str) {
