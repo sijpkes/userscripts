@@ -443,7 +443,7 @@
 
         const callback = function(mutationsList, observer) {
             // Check for the editor toolbar element
-            const editorToolbar = document.querySelector('.mce-toolbar-grp');
+            const editorToolbar = document.querySelector('.tox-editor-header');
             if (editorToolbar) {
                 // Toolbar found: set up the UI and stop observing
                 setupUI(editorToolbar);
