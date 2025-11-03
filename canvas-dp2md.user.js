@@ -1,3 +1,16 @@
+// ==UserScript==
+// @name         Canvas DesignPlus to Markdown
+// @namespace    http://tampermonkey.net/
+// @version      1.7
+// @description  Convert to or from DesignPLUS HTML in Canvas to or from Markdown with custom markers
+// @author       Paul Sijpkes
+// @match        https://*/courses/*/pages/*/edit
+// @match        https://*/courses/*/discussion_topics/*/edit
+// @grant        GM_setClipboard
+// @updateURL    https://raw.githubusercontent.com/sijpkes/userscripts/main/canvas-dp2md.meta.js
+// @downloadURL  https://raw.githubusercontent.com/sijpkes/userscripts/main/canvas-dp2md.user.js
+// ==/UserScript==
+
 (function() {
     'use strict';
 
@@ -35,7 +48,7 @@
     function waitForIframe(callback, _tout) {
         // console.log('Waiting for TinyMCE iframe...');
         const iframe = document.getElementById('wiki_page_body_ifr');
-        alert("j")
+
         if (iframe && iframe.contentDocument.body) {
             clearTimeout(_tout)
             callback(iframe, null);
@@ -358,7 +371,7 @@
         option1.textContent = 'Extract HTML to Markdown';
         option1.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 10px 0; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;';
         option1.onclick = () => {
-            alert("h")
+
             waitForIframe(iframe => {
 
                 const markdownContent = convertToMarkdown(iframe);
