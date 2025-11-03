@@ -1,16 +1,3 @@
-// ==UserScript==
-// @name         Canvas DesignPlus to Markdown
-// @namespace    http://tampermonkey.net/
-// @version      1.7
-// @description  Convert to or from DesignPLUS HTML in Canvas to or from Markdown with custom markers
-// @author       Paul Sijpkes
-// @match        https://*/courses/*/pages/*/edit
-// @match        https://*/courses/*/discussion_topics/*/edit
-// @grant        GM_setClipboard
-// @updateURL    https://raw.githubusercontent.com/sijpkes/userscripts/main/canvas-dp2md.meta.js
-// @downloadURL  https://raw.githubusercontent.com/sijpkes/userscripts/main/canvas-dp2md.user.js
-// ==/UserScript==
-
 (function() {
     'use strict';
 
@@ -45,15 +32,17 @@
     // 2. UTILITY FUNCTIONS
     // -------------------------------------------------------------------------
 
-    function waitForIframe(callback) {
+    function waitForIframe(callback, _tout) {
         // console.log('Waiting for TinyMCE iframe...');
-        const iframe = document.querySelector('iframe.mce-tinymce');
+        const iframe = document.getElementById('wiki_page_body_ifr');
+        alert("j")
         if (iframe && iframe.contentDocument.body) {
-            callback(iframe);
+            clearTimeout(_tout)
+            callback(iframe, null);
         } else {
             // Keep the timeout for iframe content access, as the iframe itself 
             // might load quickly, but its contentDocument takes time.
-            setTimeout(() => waitForIframe(callback), 100);
+            const t = setTimeout(() => waitForIframe(callback, t), 100);
         }
     }
 
@@ -369,7 +358,9 @@
         option1.textContent = 'Extract HTML to Markdown';
         option1.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 10px 0; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;';
         option1.onclick = () => {
+            alert("h")
             waitForIframe(iframe => {
+
                 const markdownContent = convertToMarkdown(iframe);
                 
                 const blob = new Blob([markdownContent], { type: 'text/markdown' });
@@ -420,7 +411,7 @@
         const trigger = document.createElement('button');
         trigger.textContent = 'DP Tools';
         trigger.style.cssText = 'background: #ffc107; color: #333; border: 1px solid #d39e00; padding: 5px 10px; margin-left: 10px; border-radius: 4px; cursor: pointer; font-weight: bold;';
-        trigger.onclick = () => { menu.style.display = 'block'; };
+        trigger.onclick = (e) => { e.preventDefault(); menu.style.display = 'block'; };
 
         const toolbarGroup = editorToolbar.querySelector('.mce-container-body');
         if (toolbarGroup) {
