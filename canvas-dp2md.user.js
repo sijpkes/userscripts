@@ -424,6 +424,8 @@
         input.type = 'file';
         input.accept = '.md, .txt';
 
+        input.accept = '.md, .txt';
+
         input.addEventListener('change', e => {
             const file = e.target.files[0];
             const reader = new FileReader();
@@ -450,7 +452,20 @@
         const option1 = document.createElement('button');
         option1.textContent = 'Extract HTML to Markdown';
         option1.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 10px 0; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;';
+        menu.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #fff; border: 1px solid #ccc; padding: 20px; z-index: 10000; box-shadow: 0 4px 8px rgba(0,0,0,0.2); border-radius: 8px; display: none;';
+        document.body.appendChild(menu);
+
+        // Add options
+        const title = document.createElement('h3');
+        title.textContent = 'DesignPLUS Content Utility';
+        menu.appendChild(title);
+
+        // Option 1: HTML to Markdown (Extraction)
+        const option1 = document.createElement('button');
+        option1.textContent = 'Extract HTML to Markdown';
+        option1.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 10px 0; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;';
         option1.onclick = () => {
+
 
             waitForIframe(iframe => {
 
@@ -472,7 +487,12 @@
             });
         };
         menu.appendChild(option1);
+        menu.appendChild(option1);
 
+        // Option 2: Markdown to HTML (Insertion)
+        const option2 = document.createElement('button');
+        option2.textContent = 'Upload Markdown to HTML';
+        option2.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 10px 0; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;';
         // Option 2: Markdown to HTML (Insertion)
         const option2 = document.createElement('button');
         option2.textContent = 'Upload Markdown to HTML';
@@ -485,6 +505,7 @@
                 const finalHtml = removeEmptyParagraphsWithNBSP(preHtml);
 
                 waitForIframe(iframe => {
+                    iframe.contentDocument.body.innerHTML = finalHtml;
                     iframe.contentDocument.body.innerHTML = finalHtml;
                     menu.style.display = 'none';
                 });
